@@ -9,7 +9,7 @@ st.set_page_config(page_title="MedAssist AI - Clinical Assistant", page_icon="�
 st.title("🩺 MedAssist AI - Clinical Assistant")
 st.caption("⚠️ **Educational Demonstration Only.** This assistant provides clinical triage guidance and supportive self-care advice. It does not provide medical diagnoses or prescriptions. For severe symptoms, consult a certified physician immediately.")
 
-api_key = st.secrets.get("OPENROUTER_API_KEY", None)
+api_key = st.secrets.get("OPENROUTER_API_KEY" , None)
 if not api_key:
     with st.sidebar:
         st.subheader("⚙️ Cloud Model Setup")
@@ -18,7 +18,6 @@ if not api_key:
             st.session_state.messages = []
             st.session_state.turns = 0
             st.rerun()
-
 SYSTEM_PROMPT = """
 You are MedAssist AI, a clinical information and triage assistant for an educational exhibition.
 Workflow instructions:
