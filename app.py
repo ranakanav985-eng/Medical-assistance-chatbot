@@ -34,7 +34,7 @@ Workflow instructions:
 Safety: Do NOT prescribe medications or dosages. Keep formatting structured and concise.
 """
 
-# Full 25-Condition Fallback Engine
+# 25 Clinical Conditions Fallback Engine
 FALLBACK_DB = {
     "neck": ("Cervical Muscular Strain / Torticollis", "Can you bring your chin down flush to touch your chest without excruciating pain or resistance?", "Apply warm moist compresses for 15 mins, rest cervical muscles, and avoid sudden rotational movements.", "Severe neck stiffness with high pyrexia, photophobia, or purple rash (Meningitis suspicion)."),
     "ankle": ("Ankle Ligamentous Inversion Sprain", "Did the trauma involve immediate localized swelling, an audible pop, or inability to take 4 independent steps?", "Follow R.I.C.E.: Rest joint, apply protected Ice for 15 mins, light Compression bandage, and Elevate above heart level.", "Inability to bear weight immediately (Ottawa ankle rule), gross deformity, or severe neurovascular numbness."),
@@ -152,7 +152,6 @@ if user_input:
                     "content": m["content"]
                 })
             
-            # Using OpenRouter auto router for active free models
             payload = {
                 "model": "openrouter/auto",
                 "messages": messages_payload,
@@ -164,21 +163,20 @@ if user_input:
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=20
+                    timeout=12
                 )
                 if resp.status_code == 200:
                     data = resp.json()
                     bot_reply = data["choices"][0]["message"]["content"]
                     used_cloud = True
-                else:
-                    st.error(f"OpenRouter Error ({resp.status_code}): {resp.text}")
-            except Exception as err:
-                st.error(f"Network Error: {err}")
+            except Exception:
+                # Silently catch any connection error or timeout
+                used_cloud = False
 
+        # Fallback cleanly to internal engine if API is offline or returns error
         if not used_cloud:
             bot_reply = fallback_reply(user_input, st.session_state.turns)
 
         st.markdown(bot_reply)
         play_audio(bot_reply)
         st.session_state.messages.append({"role": "assistant", "content": bot_reply, "audio": True})
-        
