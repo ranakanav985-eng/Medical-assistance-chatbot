@@ -34,7 +34,7 @@ Workflow instructions:
 Safety: Do NOT prescribe medications or dosages. Keep formatting structured and concise.
 """
 
-# 25 Clinical Conditions Fallback Engine
+# Full 25-Condition Fallback Engine
 FALLBACK_DB = {
     "neck": ("Cervical Muscular Strain / Torticollis", "Can you bring your chin down flush to touch your chest without excruciating pain or resistance?", "Apply warm moist compresses for 15 mins, rest cervical muscles, and avoid sudden rotational movements.", "Severe neck stiffness with high pyrexia, photophobia, or purple rash (Meningitis suspicion)."),
     "ankle": ("Ankle Ligamentous Inversion Sprain", "Did the trauma involve immediate localized swelling, an audible pop, or inability to take 4 independent steps?", "Follow R.I.C.E.: Rest joint, apply protected Ice for 15 mins, light Compression bandage, and Elevate above heart level.", "Inability to bear weight immediately (Ottawa ankle rule), gross deformity, or severe neurovascular numbness."),
@@ -78,6 +78,7 @@ def fallback_reply(user_text, turn_count):
     else:
         return f"### Clinical Triage Synthesis: {matched[0]}\n\n• **Physiological Correlation:** Symptoms are consistent with localized irritation, inflammation, or mechanical strain in the affected tissue.\n\n• **Evidence-Based Supportive Care:**\n  - {matched[2]}\n\n• ⚠️ **Critical Red-Flag Escalation Thresholds:**\n  - {matched[3]}\n\n*Reminder: Educational demonstration tool. If symptoms persist or worsen, please consult a certified doctor immediately.*"
 
+# Client-Side Voice Engine (Web Speech API)
 def play_audio(script_text):
     clean = re.sub(r'[*_#`⚠️👉🔊•\-]', '', script_text)
     clean = " ".join(clean.replace('"', '').replace("'", "").replace('\n', ' ').split())
@@ -151,9 +152,9 @@ if user_input:
                     "content": m["content"]
                 })
             
-            # Using active, free Google Gemma 3 model on OpenRouter
+            # Using OpenRouter auto router for active free models
             payload = {
-                "model": "meta-llama/llama-3.1-8b-instruct:free",
+                "model": "openrouter/auto",
                 "messages": messages_payload,
                 "temperature": 0.3
             }
