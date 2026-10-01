@@ -1,7 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import json
-import urllib.request
+import requests
 import re
 
 st.set_page_config(page_title="MedAssist AI - Clinical Assistant", page_icon="🩺", layout="centered")
@@ -11,14 +10,18 @@ st.caption("⚠️ **Educational Demonstration Only.** This assistant provides c
 
 # Retrieve OpenRouter Key securely from Streamlit Secrets or Sidebar
 api_key = st.secrets.get("OPENROUTER_API_KEY", None)
-if not api_key:
-    with st.sidebar:
-        st.subheader("⚙️ Cloud Model Setup")
+
+with st.sidebar:
+    st.subheader("⚙️ Cloud Model Setup")
+    if not api_key:
         api_key = st.text_input("OpenRouter API Key (Optional)", type="password", help="Paste your key here or save it in Streamlit Secrets.")
-        if st.button("Reset Session"):
-            st.session_state.messages = []
-            st.session_state.turns = 0
-            st.rerun()
+    else:
+        st.success("API Key detected from Secrets!")
+    
+    if st.button("Reset Session"):
+        st.session_state.messages = []
+        st.session_state.turns = 0
+        st.rerun()
 
 SYSTEM_PROMPT = """
 You are MedAssist AI, an expert, empathetic clinical triage assistant for an educational exhibition.
@@ -75,7 +78,6 @@ def fallback_reply(user_text, turn_count):
     else:
         return f"### Clinical Triage Synthesis: {matched[0]}\n\n• **Physiological Correlation:** Symptoms are consistent with localized irritation, inflammation, or mechanical strain in the affected tissue.\n\n• **Evidence-Based Supportive Care:**\n  - {matched[2]}\n\n• ⚠️ **Critical Red-Flag Escalation Thresholds:**\n  - {matched[3]}\n\n*Reminder: Educational demonstration tool. If symptoms persist or worsen, please consult a certified doctor immediately.*"
 
-# Client-Side Voice Engine (Web Speech API)
 def play_audio(script_text):
     clean = re.sub(r'[*_#`⚠️👉🔊•\-]', '', script_text)
     clean = " ".join(clean.replace('"', '').replace("'", "").replace('\n', ' ').split())
@@ -103,7 +105,6 @@ def play_audio(script_text):
     """
     components.html(html, height=45)
 
-# Automatic Welcome Message on Page Load
 if "messages" not in st.session_state:
     st.session_state.messages = [{
         "role": "assistant",
@@ -118,7 +119,6 @@ if "messages" not in st.session_state:
 if "turns" not in st.session_state:
     st.session_state.turns = 0
 
-# Display Chat History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -134,33 +134,46 @@ if user_input:
 
     with st.chat_message("assistant"):
         bot_reply = ""
-        # Route through OpenRouter free model if key is provided
-        if api_key and api_key.strip():
+        used_cloud = False
+
+        if api_key and str(api_key).strip():
+            clean_key = str(api_key).strip().strip('"').strip("'")
+            headers = {
+                "Authorization": f"Bearer {clean_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://streamlit.io",
+                "X-Title": "MedAssist AI"
+            }
+            messages_payload = [{"role": "system", "content": SYSTEM_PROMPT}]
+            for m in st.session_state.messages:
+                messages_payload.append({
+                    "role": "user" if m["role"] == "user" else "assistant",
+                    "content": m["content"]
+                })
+            
+            payload = {
+                "model": "meta-llama/llama-3.3-70b-instruct:free",
+                "messages": messages_payload,
+                "temperature": 0.3
+            }
+            
             try:
-                headers = {
-                    "Authorization": f"Bearer {api_key.strip()}",
-                    "Content-Type": "application/json"
-                }
-                messages_payload = [{"role": "system", "content": SYSTEM_PROMPT}]
-                for m in st.session_state.messages:
-                    messages_payload.append({
-                        "role": "user" if m["role"] == "user" else "assistant",
-                        "content": m["content"]
-                    })
-                
-                payload = json.dumps({
-                    "model": "meta-llama/llama-3.3-70b-instruct:free",
-                    "messages": messages_payload,
-                    "temperature": 0.3
-                }).encode("utf-8")
-                
-                req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions", data=payload, headers=headers)
-                with urllib.request.urlopen(req, timeout=12) as resp:
-                    result = json.loads(resp.read().decode("utf-8"))
-                    bot_reply = result["choices"][0]["message"]["content"]
-            except Exception:
-                bot_reply = fallback_reply(user_input, st.session_state.turns)
-        else:
+                resp = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=20
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    bot_reply = data["choices"][0]["message"]["content"]
+                    used_cloud = True
+                else:
+                    st.error(f"OpenRouter Connection Error ({resp.status_code}): {resp.text}")
+            except Exception as err:
+                st.error(f"Network / Python Error: {err}")
+
+        if not used_cloud:
             bot_reply = fallback_reply(user_input, st.session_state.turns)
 
         st.markdown(bot_reply)
