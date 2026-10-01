@@ -151,8 +151,9 @@ if user_input:
                     "content": m["content"]
                 })
             
+            # Using active, free Google Gemma 3 model on OpenRouter
             payload = {
-                "model": "meta-llama/llama-3.3-70b-instruct:free",
+                "model": "google/gemma-3-27b-it:free",
                 "messages": messages_payload,
                 "temperature": 0.3
             }
@@ -169,9 +170,9 @@ if user_input:
                     bot_reply = data["choices"][0]["message"]["content"]
                     used_cloud = True
                 else:
-                    st.error(f"OpenRouter Connection Error ({resp.status_code}): {resp.text}")
+                    st.error(f"OpenRouter Error ({resp.status_code}): {resp.text}")
             except Exception as err:
-                st.error(f"Network / Python Error: {err}")
+                st.error(f"Network Error: {err}")
 
         if not used_cloud:
             bot_reply = fallback_reply(user_input, st.session_state.turns)
@@ -179,3 +180,4 @@ if user_input:
         st.markdown(bot_reply)
         play_audio(bot_reply)
         st.session_state.messages.append({"role": "assistant", "content": bot_reply, "audio": True})
+        
