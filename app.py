@@ -9,19 +9,21 @@ st.set_page_config(page_title="MedAssist AI - Clinical Assistant", page_icon="�
 st.title("🩺 MedAssist AI - Clinical Assistant")
 st.caption("⚠️ **Educational Demonstration Only.** This assistant provides clinical triage guidance and supportive self-care advice. It does not provide medical diagnoses or prescriptions. For severe symptoms, consult a certified physician immediately.")
 
-api_key = st.secrets.get("OPENROUTER_API_KEY" , None)
+# Retrieve OpenRouter Key securely from Streamlit Secrets or Sidebar
+api_key = st.secrets.get("OPENROUTER_API_KEY", None)
 if not api_key:
     with st.sidebar:
         st.subheader("⚙️ Cloud Model Setup")
-        api_key = st.text_input("OpenRouter API Key (Optional)", type="password", help="Paste your sk-or-v1-... key, or leave blank to run the internal clinical engine.")
+        api_key = st.text_input("OpenRouter API Key (Optional)", type="password", help="Paste your key here or save it in Streamlit Secrets.")
         if st.button("Reset Session"):
             st.session_state.messages = []
             st.session_state.turns = 0
             st.rerun()
+
 SYSTEM_PROMPT = """
-You are MedAssist AI, a clinical information and triage assistant for an educational exhibition.
+You are MedAssist AI, an expert, empathetic clinical triage assistant for an educational exhibition.
 Workflow instructions:
-- Turn 1: Empathetically acknowledge every symptom or trauma mentioned (e.g., neck pain, ankle sprain, fever, cough). Ask 2 focused clinical follow-up questions regarding severity, duration, or injury mechanics.
+- Turn 1: Empathetically acknowledge every symptom or trauma mentioned (e.g., knee scrapes, headaches, falls, sprains). Ask 2 focused clinical follow-up questions regarding severity, duration, or injury mechanics.
 - Turn 2+: Synthesize cumulative symptoms. Provide:
   1. Clinical Impression & Physiological Correlation.
   2. Evidence-Based Supportive Care & Non-Pharmacological Regimen.
@@ -29,9 +31,9 @@ Workflow instructions:
 Safety: Do NOT prescribe medications or dosages. Keep formatting structured and concise.
 """
 
-# 25 Common Clinical Conditions (Single-line records for tablet stability)
+# 25 Clinical Conditions Fallback Engine
 FALLBACK_DB = {
-    "neck": ("Cervical Muscular Strain / Torticollis", "Can you bring your chin down flush to touch your chest without excruciating pain or resistance?", "Apply warm moist compresses for 15 mins, rest cervical muscles, and avoid sudden rotational movements.", "Severe neck stiffness with high pyrexia, photophobia, or purple purpuric rash (Meningitis suspicion)."),
+    "neck": ("Cervical Muscular Strain / Torticollis", "Can you bring your chin down flush to touch your chest without excruciating pain or resistance?", "Apply warm moist compresses for 15 mins, rest cervical muscles, and avoid sudden rotational movements.", "Severe neck stiffness with high pyrexia, photophobia, or purple rash (Meningitis suspicion)."),
     "ankle": ("Ankle Ligamentous Inversion Sprain", "Did the trauma involve immediate localized swelling, an audible pop, or inability to take 4 independent steps?", "Follow R.I.C.E.: Rest joint, apply protected Ice for 15 mins, light Compression bandage, and Elevate above heart level.", "Inability to bear weight immediately (Ottawa ankle rule), gross deformity, or severe neurovascular numbness."),
     "knee": ("Knee Arthralgia & Ligamentous Strain", "Did the knee lock, twist violently, or swell within the first 2 hours of injury?", "Cease weight-bearing loading, apply protected cryotherapy for 15 mins twice daily, and keep leg elevated.", "Rapid swelling within 2 hours, inability to straighten knee fully, or joint redness with fever."),
     "back": ("Lumbar Paraspinal Strain & Lumbago", "Does discomfort radiate past the knee down the leg, or cause numbness in the groin/saddle area?", "Avoid bed rest >24h; maintain gentle walking, apply alternating warm compresses, and sleep with a knee pillow.", "Cauda Equina flags: loss of bowel/bladder control, saddle numbness, or sudden progressive lower limb weakness."),
@@ -45,10 +47,10 @@ FALLBACK_DB = {
     "stomach": ("Acute Dyspepsia & Gastroenteritis", "Where is the pain localized (upper or lower), and does it correlate chronologically with meals?", "Withhold heavy/fatty foods for 4-6 hours, adopt the BRAT diet (bananas, rice, applesauce, toast), and sip clear fluids.", "Surgical flags: localized right lower quadrant rebound tenderness (McBurney point), board-like rigidity, hematemesis."),
     "diarrhea": ("Acute Infectious/Osmotic Gastroenteritis", "What is the 24-hour frequency of loose evacuations, and is there visible blood or dark mucus?", "Immediately initiate Oral Rehydration Salts (ORS) solution sip-by-sip after each loose stool; avoid dairy and sugar.", "Grossly bloody or black melenic stool, postural syncope, absence of urination >8h, or high fever."),
     "vomit": ("Acute Emesis & Gastric Intolerance", "Can you retain small sips of water without immediately vomiting, and what color is the vomitus?", "Total gastric rest (NPO) for 60 mins post-vomit, then introduce 1 teaspoon (5ml) clear electrolyte fluid every 10 mins.", "Coffee-ground emesis, bright hematemesis, unrelenting localized pain, or persistent neurological lethargy."),
-    "headache": ("Cephalalgia / Tension-Type & Migraine", "Is discomfort a bilateral compressive band or unilateral pulsatile throbbing with light sensitivity?", "Retire into a sound-attenuated, darkened room, drink 500-750 mL fluid immediately, and apply cold temporal compress.", "Thunderclap onset (peak in <60 seconds), focal motor deficits, neck stiffness with pyrexia, or post-trauma."),
+    "head": ("Cephalalgia / Tension-Type & Migraine", "Is discomfort a bilateral compressive band or unilateral pulsatile throbbing with light sensitivity?", "Retire into a sound-attenuated, darkened room, drink 500-750 mL fluid immediately, and apply cold temporal compress.", "Thunderclap onset (peak in <60 seconds), focal motor deficits, neck stiffness with pyrexia, or post-trauma."),
     "acid reflux": ("Gastroesophageal Reflux Disease (GERD)", "Does burning intensify during supine reclining, and do you experience sour fluid regurgitation?", "Elevate bed head 15 cm, remain upright 3 hours after meals, avoid late heavy meals, chocolate, and caffeine.", "Progressive dysphagia (food feeling stuck behind sternum), odynophagia, unexplained weight loss, or vomiting."),
     "dizziness": ("Vestibular Dysfunction & Orthostatic Lightheadedness", "Do you perceive rotational spinning when turning your head, or lightheaded faintness upon standing?", "Sit or lie down flat immediately upon onset to prevent mechanical falls; change postures slowly in 60-second steps.", "HINTS red flags: new speech slurring, acute limb ataxia (cannot stand unaided), double vision, or sudden hearing drop."),
-    "rash": ("Acute Urticaria & Contact Dermatitis", "Are lesions raised, blanching under pressure, or rapidly expanding across body surfaces?", "Wash gently with cool sterile water and mild non-soap syndet, apply cold damp compresses, and avoid scratch friction.", "ANAPHYLAXIS: Concurrent angioedema (swelling of lips, tongue, or throat), wheezing, stridor, or syncope."),
+    "rash": ("Acute Urticaria & Contact Dermatitis", "Are lesions raised, blanching under pressure, or rapidly expanding across body surfaces?", "Wash gently with cool sterile water and mild non-soap syndet, apply cold damp compresses, avoid scratch friction.", "ANAPHYLAXIS: Concurrent angioedema (swelling of lips, tongue, or throat), wheezing, stridor, or syncope."),
     "burn": ("Superficial / Partial-Thickness Thermal Injury", "Are there intact or ruptured fluid blisters, and does the area exceed the size of your palm?", "Irrigate immediately under cool running tap water for 20 continuous minutes; avoid ice, butter, or toothpaste.", "Burns covering face, hands, major joints, or genitalia; circumferential burns; or white painless leathery eschar."),
     "fatigue": ("Systemic Asthenia & Post-Viral Fatigue", "Has this fatigue persisted beyond two weeks, and does it remain unrefreshed by 8 hours of sleep?", "Practice energy budgeting, ensure balanced complex carbohydrates and protein intake, and drink 2L water daily.", "Sudden focal limb weakness, exertional syncope, unexplained weight loss, or heavy nocturnal drenching sweats."),
     "eye": ("Acute Conjunctivitis & Ocular Irritation", "Is there yellow/green discharge gluing lids shut upon waking, or predominantly watery itching?", "Apply cool sterile compresses over closed eyes, discontinue contact lenses immediately, and practice hand hygiene.", "Marked reduction in visual acuity, severe deep ciliary eye pain, severe photophobia, or pupil asymmetry."),
@@ -73,6 +75,7 @@ def fallback_reply(user_text, turn_count):
     else:
         return f"### Clinical Triage Synthesis: {matched[0]}\n\n• **Physiological Correlation:** Symptoms are consistent with localized irritation, inflammation, or mechanical strain in the affected tissue.\n\n• **Evidence-Based Supportive Care:**\n  - {matched[2]}\n\n• ⚠️ **Critical Red-Flag Escalation Thresholds:**\n  - {matched[3]}\n\n*Reminder: Educational demonstration tool. If symptoms persist or worsen, please consult a certified doctor immediately.*"
 
+# Client-Side Voice Engine (Web Speech API)
 def play_audio(script_text):
     clean = re.sub(r'[*_#`⚠️👉🔊•\-]', '', script_text)
     clean = " ".join(clean.replace('"', '').replace("'", "").replace('\n', ' ').split())
@@ -100,6 +103,7 @@ def play_audio(script_text):
     """
     components.html(html, height=45)
 
+# Automatic Welcome Message on Page Load
 if "messages" not in st.session_state:
     st.session_state.messages = [{
         "role": "assistant",
@@ -114,6 +118,7 @@ if "messages" not in st.session_state:
 if "turns" not in st.session_state:
     st.session_state.turns = 0
 
+# Display Chat History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -129,24 +134,23 @@ if user_input:
 
     with st.chat_message("assistant"):
         bot_reply = ""
+        # Route through OpenRouter free model if key is provided
         if api_key and api_key.strip():
             try:
                 headers = {
                     "Authorization": f"Bearer {api_key.strip()}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://streamlit.io",
-                    "X-Title": "MedAssist AI"
+                    "Content-Type": "application/json"
                 }
-                openrouter_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                messages_payload = [{"role": "system", "content": SYSTEM_PROMPT}]
                 for m in st.session_state.messages:
-                    openrouter_messages.append({
+                    messages_payload.append({
                         "role": "user" if m["role"] == "user" else "assistant",
                         "content": m["content"]
                     })
                 
                 payload = json.dumps({
-                    "model": "openrouter/free",
-                    "messages": openrouter_messages,
+                    "model": "meta-llama/llama-3.3-70b-instruct:free",
+                    "messages": messages_payload,
                     "temperature": 0.3
                 }).encode("utf-8")
                 
@@ -162,4 +166,3 @@ if user_input:
         st.markdown(bot_reply)
         play_audio(bot_reply)
         st.session_state.messages.append({"role": "assistant", "content": bot_reply, "audio": True})
-        
