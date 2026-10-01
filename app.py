@@ -153,7 +153,7 @@ if user_input:
             
             # Using active, free Google Gemma 3 model on OpenRouter
             payload = {
-                "model": "google/gemma-3-27b-it:free",
+                "model": "meta-llama/llama-3.1-8b-instruct:free",
                 "messages": messages_payload,
                 "temperature": 0.3
             }
