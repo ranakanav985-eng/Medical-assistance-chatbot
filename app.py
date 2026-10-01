@@ -2,280 +2,151 @@ import streamlit as st
 import streamlit.components.v1 as components
 import re
 
-st.set_page_config(
-    page_title="MedAssist AI - Clinical Assistant",
-    page_icon="🩺",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="MedAssist AI", page_icon="🩺", layout="centered")
 
-# Custom CSS for Modern Clinical Dashboard Styling
-st.markdown("""
-<style>
-    .main { background-color: #f8fafc; }
-    .stChatMessage { border-radius: 12px; margin-bottom: 10px; }
-    .metric-card {
-        background: white;
-        padding: 14px 18px;
-        border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        border-left: 4px solid #0E76A8;
-        margin-bottom: 12px;
-    }
-    .badge {
-        display: inline-block;
-        padding: 3px 10px;
-        border-radius: 12px;
-        font-size: 12px;
+st.title("🩺 MedAssist AI - Clinical Assistant")
+st.caption("⚠️ **Educational Demonstration Only.** This assistant provides general clinical triage and supportive advice. It does not provide medical diagnoses or prescriptions. For severe symptoms, consult a certified physician immediately.")
+
+# Comprehensive 25-condition clinical knowledge base (compact, single-line format)
+DB = {
+    "ankle_sprain": (["twisted ankle", "ankle", "twisted", "sprain", "twisted my ankle", "foot pain", "twisted foot"], "Ankle Inversion/Eversion Ligamentous Sprain", "Musculoskeletal", "Did the trauma involve immediate localized swelling, an audible pop, or inability to take 4 independent steps?", "Implement R.I.C.E.: Rest limb, apply Ice for 15-20 mins every 3 hours, wrap with Compression bandage, and Elevate above heart level.", "Inability to bear weight immediately, severe bone tenderness over malleolus (Ottawa Rule), gross deformity, or severe numbness."),
+    "knee_pain": (["knee", "patella", "meniscus", "knee sprain", "twisted knee"], "Knee Arthralgia / Meniscal & Ligamentous Strain", "Musculoskeletal", "Did you experience joint locking, sudden 'giving way', or acute anterior clicking during flexion?", "Cease weight-bearing loading, apply protected cryotherapy for 15 mins twice daily, and keep leg elevated.", "Rapid joint effusion within 2 hours, inability to extend leg fully, or local erythema with systemic fever."),
+    "wrist_strain": (["wrist", "twisted wrist", "sprained wrist", "carpal"], "Acute Wrist Ligamentous Distension", "Musculoskeletal", "Did this follow a fall onto an outstretched hand, and is there tenderness in the anatomical snuffbox?", "Immobilize wrist in neutral alignment with a splint, apply cold packs, and avoid gripping motions.", "Tenderness in anatomical snuffbox (scaphoid fracture suspicion), acute pallor, or persistent thumb numbness."),
+    "back_pain": (["back", "lower back", "lumbago", "spine", "lumbar", "back spasm"], "Lumbar Paraspinal Strain & Mechanical Lumbago", "Musculoskeletal", "Does discomfort radiate past the knee down the leg, or cause numbness in the groin/saddle area?", "Avoid bed rest >24h; maintain gentle walking, apply alternating warm compresses, and sleep with a knee pillow.", "Cauda Equina flags: loss of bowel/bladder control, saddle numbness, or sudden progressive lower limb weakness."),
+    "neck_stiffness": (["stiff neck", "neck pain", "cervical", "wry neck", "torticollis"], "Cervical Muscular Spasm / Acute Torticollis", "Musculoskeletal", "Can you bring your chin down flush to touch your chest without excruciating pain or involuntary knee flexion?", "Apply moist heat compresses to paraspinal muscles, perform gentle rotations, and use cervical support.", "CRITICAL: Severe nuchal rigidity accompanied by sudden high fever, photophobia, or purple rash (Meningitis)."),
+    "fever": (["fever", "temperature", "chills", "febrile", "pyrexia", "hot"], "Systemic Febrile Syndrome", "Infectious/Systemic", "What is the peak core temperature recorded, and how many continuous hours has it persisted?", "Maintain oral hydration with electrolyte fluids (35 mL/kg/day target), rest in a 21°C ventilated space, wear light cotton.", "Core temperature >103°F (39.4°C), altered consciousness, stiff neck, petechiae, or continuous vomiting."),
+    "sore_throat": (["throat", "pharyngitis", "tonsil", "swallowing", "swallow"], "Acute Pharyngitis & Tonsillitis", "Respiratory/ENT", "Are you able to swallow liquids comfortably, and are there visible tonsillar white exudates?", "Gargle with warm saline (1/2 tsp salt in 250ml warm water) 3 times daily, drink warm broths, rest voice.", "Inability to swallow saliva (pooling), trismus (can't open mouth fully), stridor, or asymmetrical tonsillar swelling."),
+    "cough": (["cough", "coughing", "phlegm", "mucus", "bronchitis"], "Acute Bronchitis & Respiratory Irritation", "Respiratory", "Is the cough dry and hacking or productive with discolored, thick, or purulent sputum?", "Perform warm steam inhalation for 10-15 mins, sip warm fluids with honey, and maintain indoor humidity.", "Hemoptysis (coughing blood), respiratory rate >24/min, sharp pleuritic chest pain on inhalation, or dyspnea."),
+    "cold": (["cold", "runny nose", "congestion", "sneezing", "blocked nose", "sinus"], "Viral Rhinosinusitis (Common Cold)", "Respiratory/ENT", "Is nasal drainage watery or thickened, and have symptoms persisted beyond 10 days without relief?", "Administer isotonic saline nasal irrigation, elevate head 30 degrees during sleep, and hydrate well.", "Periorbital eye swelling, severe unilateral facial pain with secondary fever spike, or stiff neck."),
+    "shortness_of_breath": (["shortness of breath", "breathless", "dyspnea", "wheezing", "gasping", "breath", "breathe"], "Acute Dyspnea & Reactive Airway Exacerbation", "Cardiopulmonary", "Did breathlessness commence acutely, and do you perceive end-expiratory whistling or wheezing?", "Adopt High-Fowler's posture (sit upright leaning slightly forward), loosen chest clothing, practice pursed-lip breathing.", "CRITICAL: Central cyanosis (blue lips/fingers), intercostal retractions, inability to speak 2 words, or diaphoresis."),
+    "chest_pain": (["chest pain", "chest pressure", "chest tightness", "angina", "sternum"], "Thoracic Discomfort / Cardiac & Musculoskeletal Triage", "Cardiovascular", "Does discomfort fluctuate with rib palpation and breathing, or present as deep substernal tightness?", "Immediately cease all physical activity, rest seated upright with back support, and avoid heavy oral intake.", "CRITICAL: Crushing retrosternal pressure radiating to jaw or left arm, cold diaphoresis, dyspnea, or nausea."),
+    "stomach_pain": (["stomach", "abdominal", "belly", "cramp", "gastritis", "indigestion", "tummy", "gut"], "Acute Abdominal Discomfort & Dyspepsia", "Gastrointestinal", "Where is the pain focalized (epigastric, lower right quadrant), and does it correlate with meals?", "Withhold heavy/fatty foods for 4-6 hours, adopt the BRAT diet (bananas, rice, applesauce, toast), sip clear fluids.", "Surgical flags: localized right lower quadrant rebound tenderness (McBurney point), board-like rigidity, hematemesis."),
+    "diarrhea": (["diarrhea", "diarrhoea", "loose stool", "watery stool", "loose motion"], "Acute Infectious/Osmotic Gastroenteritis", "Gastrointestinal", "What is the 24-hour frequency of loose evacuations, and is there visible blood or dark mucus?", "Immediately initiate Oral Rehydration Salts (ORS) solution sip-by-sip after each loose stool; avoid dairy and sugar.", "Grossly bloody or black melenic stool, postural syncope, absence of urination >8h, or high fever."),
+    "vomiting": (["vomit", "vomiting", "nausea", "throwing up", "puke", "queasy"], "Acute Emesis & Gastric Intolerance", "Gastrointestinal", "Can you retain small sips of water without immediately vomiting, and what color is the vomitus?", "Total gastric rest (NPO) for 60 mins post-vomit, then introduce 1 teaspoon (5ml) clear electrolyte fluid every 10 mins.", "Coffee-ground emesis, bright hematemesis, unrelenting localized pain, or persistent neurological lethargy."),
+    "acid_reflux": (["acid reflux", "heartburn", "gerd", "acidity", "sour burp"], "Gastroesophageal Reflux Disease (GERD)", "Gastrointestinal", "Does burning intensify during supine reclining, and do you experience sour fluid regurgitation?", "Elevate bed head 15 cm, remain upright 3 hours after meals, avoid late heavy meals, chocolate, and caffeine.", "Progressive dysphagia (food feeling stuck behind sternum), odynophagia, unexplained weight loss, or vomiting."),
+    "headache": (["headache", "head ache", "migraine", "temple pain", "forehead pain"], "Cephalalgia / Tension-Type & Migraine Syndrome", "Neurological", "Is discomfort a bilateral compressive band or unilateral pulsatile throbbing with light sensitivity?", "Retire into a sound-attenuated, darkened room, drink 500-750 mL fluid immediately, apply cold temporal compress.", "Thunderclap onset (peak in <60 seconds), focal motor deficits, neck stiffness with pyrexia, or post-trauma."),
+    "dizziness": (["dizziness", "dizzy", "vertigo", "spinning", "lightheaded", "unsteady"], "Vestibular Dysfunction & Orthostatic Lightheadedness", "Neurological", "Do you perceive rotational spinning when turning your head, or lightheaded faintness upon standing?", "Sit or lie down flat immediately upon onset to prevent mechanical falls; change postures slowly in 60-second steps.", "HINTS red flags: new speech slurring, acute limb ataxia (cannot stand unaided), double vision, or sudden hearing drop."),
+    "skin_rash": (["rash", "hives", "itching", "itchy", "urticaria", "red spots", "welts", "eczema"], "Acute Urticaria & Contact Dermatitis", "Dermatology", "Are lesions raised, blanching under pressure, or rapidly expanding across body surfaces?", "Wash gently with cool sterile water and mild non-soap syndet, apply cold damp compresses, avoid scratch friction.", "ANAPHYLAXIS: Concurrent angioedema (swelling of lips, tongue, or throat), wheezing, stridor, or syncope."),
+    "burn": (["burn", "scald", "heat burn", "sunburn", "burned"], "Superficial / Partial-Thickness Thermal Injury", "Dermatology", "Are there intact or ruptured fluid blisters, and does the area exceed the size of your palm?", "Irrigate immediately under cool running tap water for 20 continuous minutes; avoid ice, butter, or toothpaste.", "Burns covering face, hands, major joints, or genitalia; circumferential burns; or white painless leathery eschar."),
+    "fatigue": (["fatigue", "tiredness", "exhaustion", "weakness", "lethargy", "drowsy"], "Systemic Asthenia & Post-Viral Fatigue", "Systemic", "Has this fatigue persisted beyond two weeks, and does it remain unrefreshed by 8 hours of sleep?", "Practice energy budgeting, ensure balanced complex carbohydrates and protein intake, drink 2L water daily.", "Sudden focal limb weakness, exertional syncope, unexplained weight loss, or heavy nocturnal drenching sweats."),
+    "eye_irritation": (["eye", "conjunctivitis", "pink eye", "eye redness", "watery eye"], "Acute Conjunctivitis & Ocular Irritation", "Ophthalmology", "Is there yellow/green discharge gluing lids shut upon waking, or predominantly watery itching?", "Apply cool sterile compresses over closed eyes, discontinue contact lenses immediately, practice hand hygiene.", "Marked reduction in visual acuity, severe deep ciliary eye pain, severe photophobia, or pupil asymmetry."),
+    "ear_pain": (["ear pain", "ear ache", "earache", "clogged ear", "ear discharge"], "Otalgia / Otitis Media & Externa", "ENT", "Does pulling the earlobe or tragus elicit severe pain, or did this follow swimming or an upper respiratory cold?", "Keep auditory canal strictly dry, rest head elevated, apply a warm dry external compress over mastoid area.", "Purulent or hemorrhagic canal drainage, redness/swelling behind the earlobe (mastoiditis), or facial weakness."),
+    "constipation": (["constipation", "hard stool", "bowel strain", "cant poop"], "Colonic Dysmotility & Constipation", "Gastrointestinal", "When was your last complete evacuation, and are you passing abdominal flatus (gas) normally?", "Increase dietary soluble fiber (psyllium, oats) to 25-30g daily, drink 2.5L water daily, and walk 20 mins daily.", "Obstipation (total inability to pass both stool and gas), severe distension, continuous vomiting, or rectal bleeding."),
+    "heat_exhaustion": (["heat exhaustion", "heat stroke", "sunstroke", "overheating"], "Thermoregulatory Strain & Heat Exhaustion", "Environmental", "Are you sweating profusely, or has perspiration ceased while your skin feels dry and burning hot?", "Move immediately to an air-conditioned room, apply cold damp towels to neck/axillae/groin, sip chilled water.", "HEAT STROKE: Anhidrosis (no sweating), core temp >104°F (40°C), confusion, ataxia, seizures, or loss of consciousness."),
+    "mouth_ulcer": (["mouth ulcer", "canker sore", "tongue sore", "lip ulcer"], "Minor Aphthous Stomatitis", "Oral/Mucosal", "Is the lesion a solitary shallow round crater with an erythematous halo inside the mouth?", "Rinse with warm saline (1/2 tsp salt in 200ml warm water) 4 times daily, avoid spicy/acidic foods, use soft brush.", "Ulcers persisting continuously beyond 14 days, recurrent extensive clusters, or concurrent genital sores.")
+}
+
+# 1. Automatic greeting loads on the very first screen
+if "messages" not in st.session_state:
+    st.session_state.messages = [{
+        "role": "assistant",
+        "content": (
+            "### 🩺 MedAssist AI - Clinical Assistant\n"
+            "Hello! I am your clinical triage assistant. I analyze physiological symptoms, "
+            "provide evidence-based supportive care protocols, and screen for critical emergency red flags.\n\n"
+            "👉 **How can I assist you today?** Please describe what bodily discomfort, trauma, or symptoms you are experiencing (e.g., ankle sprain, fever, cough, chest pressure, headache, or stomach ache)."
+        ),
+        "audio": True
+    }]
+if "active_symptoms" not in st.session_state:
+    st.session_state.active_symptoms = []
+if "turn_count" not in st.session_state:
+    st.session_state.turn_count = 0
+
+def detect_clinical_keys(text):
+    text_clean = text.lower()
+    matched = []
+    for key, data in DB.items():
+        all_terms = [key.replace("_", " ")] + data[0]
+        for term in all_terms:
+            if re.search(r'(?:\b|\W)' + re.escape(term) + r'(?:\b|\W)', text_clean):
+                if key not in matched:
+                    matched.append(key)
+                break
+    return matched
+
+def play_audio(script_text):
+    clean = re.sub(r'[*_#`⚠️👉🔊•\-]', '', script_text)
+    clean = " ".join(clean.replace('"', '').replace("'", "").replace('\n', ' ').split())
+    html = f"""
+    <script>
+    function speakText() {{
+        window.speechSynthesis.cancel();
+        const msg = new SpeechSynthesisUtterance("{clean}");
+        msg.rate = 0.95;
+        msg.pitch = 1.0;
+        window.speechSynthesis.speak(msg);
+    }}
+    </script>
+    <button onclick="speakText()" style="
+        background-color: #0E76A8;
+        color: white;
+        border: none;
+        padding: 6px 14px;
+        border-radius: 6px;
         font-weight: 600;
-        margin-right: 6px;
-        margin-bottom: 6px;
-        background-color: #e0f2fe;
-        color: #0369a1;
-    }
-</style>
-""", unsafe_allow_html=True)
+        cursor: pointer;
+        font-size: 13px;
+        margin-top: 6px;
+    ">🔊 Listen to Clinical Guidance</button>
+    """
+    components.html(html, height=45)
 
-# Comprehensive Multi-Domain Clinical Knowledge Base (35 Medical Conditions)
-CLINICAL_KNOWLEDGE_BASE = {
-    # 1. Musculoskeletal & Orthopedic
-    "ankle_sprain": {
-        "title": "Ankle Inversion / Eversion Sprain",
-        "system": "Musculoskeletal",
-        "keywords": ["twisted ankle", "ankle sprain", "rolled ankle", "ankle pain", "sprained ankle", "ankle injury", "twisted my ankle", "twisted foot"],
-        "pathophysiology": "Acute mechanical stretching or microscopic tearing of lateral ankle ligaments (most frequently anterior talofibular and calcaneofibular ligaments) following forced inversion/plantarflexion.",
-        "inquiry": "Did the trauma involve immediate localized edema, audible popping, or inability to take four independent steps immediately post-injury?",
-        "care_protocol": [
-            "Rest: Absolute avoidance of aggravating physical activity or forced weight-bearing.",
-            "Ice: 15–20 minutes crushed ice application wrapped in damp linen every 3 hours (avoid direct thermal contact).",
-            "Compression: Semi-rigid elastic bandage wrap from metatarsals up to mid-calf, ensuring distal peripheral capillary refill <2s.",
-            "Elevation: Position limb above left atrial horizontal plane to facilitate lymphatic drainage."
-        ],
-        "red_flags": "Ottawa Ankle Rule positive (bony tenderness over posterior 6 cm of lateral/medial malleolus), neurovascular compromise, visible deformity, or total weight-bearing intolerance.",
-        "urgency": "Moderate (Clinical Triage L4 / Urgent Care)"
-    },
-    "knee_pain": {
-        "title": "Knee Arthralgia / Patellofemoral & Meniscal Strain",
-        "system": "Musculoskeletal",
-        "keywords": ["knee pain", "swollen knee", "twisted knee", "runner knee", "knee sprain", "knee injury", "patella", "meniscus"],
-        "pathophysiology": "Joint effusion, intra-articular ligamentous strain (ACL/MCL), or localized inflammation of the patellar tendon/bursa secondary to rotational torque or excessive load.",
-        "inquiry": "Did you experience joint locking, sudden mechanical instability ('giving way'), or localized anterior clicking during knee flexion?",
-        "care_protocol": [
-            "Implement mechanical unloading with crutches if ambulation induces antalgic limp.",
-            "Ice application for 15 minutes twice daily to diminish secondary vascular congestion.",
-            "Perform isometric quadriceps sets with knee extended, avoiding deep loaded squats."
-        ],
-        "red_flags": "Gross joint effusion appearing within 2 hours of injury, inability to reach full knee extension, or concurrent systemic pyrexia (septic arthritis suspicion).",
-        "urgency": "Moderate"
-    },
-    "wrist_strain": {
-        "title": "Acute Wrist / Forearm Ligamentous Distension",
-        "system": "Musculoskeletal",
-        "keywords": ["wrist pain", "sprained wrist", "twisted wrist", "carpal tunnel", "wrist sprain", "wrist swelling"],
-        "pathophysiology": "Hyper-extension or hyper-flexion stress resulting in strain of the scapholunate ligament complex or carpal synovial irritation.",
-        "inquiry": "Did injury follow a fall onto an outstretched hand (FOOSH), and is tenderness localized over the anatomical snuffbox?",
-        "care_protocol": [
-            "Splint wrist in neutral anatomical alignment with a wrist immobilizer.",
-            "Apply cryotherapy packs for 12 minutes periodically across the dorsal wrist.",
-            "Avoid pronation-supination mechanical strain or gripping motions."
-        ],
-        "red_flags": "Tenderness in anatomical snuffbox (scaphoid fracture suspicion), median nerve paresthesia (numbness in thumb/index), or acute pallor.",
-        "urgency": "Moderate"
-    },
-    "lower_back_pain": {
-        "title": "Lumbar Paraspinal Strain & Mechanical Lumbago",
-        "system": "Musculoskeletal",
-        "keywords": ["back pain", "lower back", "lumbago", "spine pain", "back spasm", "lumbar strain", "pulled back muscle"],
-        "pathophysiology": "Micro-tearing of erector spinae musculature or acute facet joint micro-irritation provoked by improper lifting mechanics or postural fatigue.",
-        "inquiry": "Does the discomfort radiate below the popliteal fossa (knee), and have you noticed tingling in the dermatomal distribution of L4-S1?",
-        "care_protocol": [
-            "Maintain moderate light ambulation; avoid prolonged uninterrupted bed rest >24 hours.",
-            "Apply alternating heat packs (15 mins) to relieve involuntary paravertebral spasticity.",
-            "Sleep in a lateral recumbent position with a pillow interposed between knees."
-        ],
-        "red_flags": "Cauda Equina Syndrome indicators: acute bilateral lower extremity weakness, progressive perineal/saddle anesthesia, urinary retention, or fecal incontinence.",
-        "urgency": "Urgent if red flags present; otherwise Routine"
-    },
-    "neck_stiffness": {
-        "title": "Cervical Muscular Spasm / Acute Torticollis",
-        "system": "Musculoskeletal / Neurological",
-        "keywords": ["stiff neck", "neck pain", "cervical strain", "wry neck", "torticollis", "neck spasm"],
-        "pathophysiology": "Unilateral or bilateral contracture of sternocleidomastoid or trapezius fibers following poor ergonomic sleep positioning or prolonged static flexion.",
-        "inquiry": "Can you touch your chin flush against your chest without eliciting excruciating pain or involuntary reflex knee flexion (Brudzinski sign)?",
-        "care_protocol": [
-            "Employ moist therapeutic heat compresses to cervical paraspinal zones.",
-            "Perform passive range-of-motion rotational stretches within pain-free boundaries.",
-            "Ensure a cervical ergonomic pillow that aligns the cervical-thoracic axis."
-        ],
-        "red_flags": "Nuchal rigidity accompanied by sudden high pyrexia, photophobia, confusion, or a non-blanching purpuric rash (Meningitis screening).",
-        "urgency": "High/Emergency if fever/rigidity present"
-    },
+# Render existing chat
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if msg.get("audio"):
+            play_audio(msg["content"])
 
-    # 2. Respiratory & Pulmonary
-    "fever": {
-        "title": "Febrile Syndrome / Systemic Pyrexia",
-        "system": "Infectious / Systemic",
-        "keywords": ["fever", "temperature", "febrile", "pyrexia", "hot body", "high temp", "chills", "rigors"],
-        "pathophysiology": "Endogenous pyrogen release (IL-1, TNF-alpha) shifting the hypothalamic thermal setpoint upwards in response to viral or bacterial antigens.",
-        "inquiry": "What is the peak core temperature recorded via oral/tympanic thermometer, and what is the exact chronological duration in hours/days?",
-        "care_protocol": [
-            "Maintain strict fluid replacement with water and oral electrolyte fluids (35 mL/kg/day target).",
-            "Wear thin, moisture-wicking single-layer cotton apparel in a room maintained at 20–22°C.",
-            "Implement lukewarm sponge baths if uncomfortable; avoid ice-cold hydrotherapy (prevents shivering thermogenesis)."
-        ],
-        "red_flags": "Core pyrexia >103°F (39.4°C) refractory to cooling, altered consciousness, nuchal rigidity, petechiae, or persistent vomiting.",
-        "urgency": "High"
-    },
-    "sore_throat": {
-        "title": "Acute Pharyngitis & Tonsillitis",
-        "system": "Respiratory / ENT",
-        "keywords": ["sore throat", "throat pain", "pharyngitis", "tonsil", "swallowing pain", "scratchy throat", "strep throat", "hurt to swallow"],
-        "pathophysiology": "Erythematous mucosal inflammation of the posterior oropharynx secondary to viral pathogens (rhinovirus, adenovirus, EBV) or group A Streptococcus.",
-        "inquiry": "Do you present with tonsillar exudates, tender anterior cervical lymphadenopathy, and absence of cough (Centor criteria)?",
-        "care_protocol": [
-            "Perform warm hypertonic saline gargling (5g sodium chloride in 250 mL sterile warm water) tid.",
-            "Consume viscous, soothing fluids (warm bone broths, herbal teas with honey).",
-            "Avoid mucosal irritants including citrus acids, hot spices, and environmental aerosols."
-        ],
-        "red_flags": "Inability to swallow saliva (pooling), trismus (inability to open mandible), stridor, or asymmetrical peritonsillar deviation.",
-        "urgency": "High if airway signs present"
-    },
-    "cough": {
-        "title": "Acute Bronchitis & Respiratory Irritation",
-        "system": "Respiratory",
-        "keywords": ["cough", "coughing", "bronchitis", "phlegm", "mucus", "hacking cough", "wet cough", "dry cough", "productive cough"],
-        "pathophysiology": "Hyper-reactive inflammatory response of the tracheobronchial tree stimulating mechanical vagal afferent cough receptors.",
-        "inquiry": "Is the cough non-productive (paroxysmal) or productive with purulent, discolored, or rust-colored sputum?",
-        "care_protocol": [
-            "Employ isotonic steam inhalation for 10–15 minutes bid to loosen mucus plugs.",
-            "Maintain optimal room humidity utilizing a cool-mist ultrasonic humidifier.",
-            "Administer natural demulcents such as unpasteurized honey (in patients >1 year of age)."
-        ],
-        "red_flags": "Frank hemoptysis (coughing blood), respiratory rate >24 breaths/min, focal pleuritic chest pain, or oxygen saturation <94%.",
-        "urgency": "Moderate to High"
-    },
-    "cold": {
-        "title": "Viral Rhinosinusitis (Common Cold)",
-        "system": "Respiratory / ENT",
-        "keywords": ["cold", "runny nose", "congestion", "sneezing", "blocked nose", "nasal congestion", "stuffy nose", "sinus pressure"],
-        "pathophysiology": "Viral infection (primarily Picornaviridae/Rhinovirus) inducing localized mucosal edema, hyper-secretion, and kinin-mediated nasal vascular dilation.",
-        "inquiry": "Is rhinorrhea watery and bilateral, and have symptoms persisted beyond 10 days without clinical improvement?",
-        "care_protocol": [
-            "Administer buffered isotonic nasal saline irrigations via sinus rinse flask.",
-            "Elevate head of the bed 30 degrees during sleep to mitigate nocturnal post-nasal pooling.",
-            "Ensure extensive systemic fluid hydration to maintain thin mucus viscosity."
-        ],
-        "red_flags": "Periorbital or facial cellulitis/swelling, severe persistent unilateral maxillary pain with secondary fever spike ('double sickening').",
-        "urgency": "Routine"
-    },
-    "shortness_of_breath": {
-        "title": "Acute Dyspnea & Bronchospasm Exacerbation",
-        "system": "Cardiopulmonary",
-        "keywords": ["shortness of breath", "breathless", "dyspnea", "breathing difficulty", "wheezing", "gasping", "cant breathe", "can't breathe"],
-        "pathophysiology": "Ventilation-perfusion mismatch, reactive airway bronchoconstriction, parenchymal consolidation, or pulmonary venous congestion.",
-        "inquiry": "Did dyspnea initiate acutely at rest, and do you experience audible end-expiratory polyphonic wheezes?",
-        "care_protocol": [
-            "Adopt the High-Fowler's posture: sit upright leaning slightly forward with arms supported (tripod position).",
-            "Loosen constrictive chest and abdominal garments immediately.",
-            "Perform pursed-lip diaphragmatic breathing to stabilize intra-alveolar pressure."
-        ],
-        "red_flags": "CRITICAL EMERGENCY: Cyanosis of lips/fingers, intercostal retractions, inability to vocalize more than 2 words without gasping, or diaphoresis.",
-        "urgency": "CRITICAL EMERGENCY"
-    },
-    "chest_pain": {
-        "title": "Acute Thoracic Pain / Cardiac & Musculoskeletal Triage",
-        "system": "Cardiovascular / Thoracic",
-        "keywords": ["chest pain", "chest tightness", "chest pressure", "heart pain", "angina", "sternum pain", "rib pain"],
-        "pathophysiology": "Ischemic myocardial strain, intercostal chondrosternal inflammation (costochondritis), or esophageal reflux spasm.",
-        "inquiry": "Does the discomfort change with positional movements, rib palpation, and deep inspiration, or present as a heavy retrosternal pressure?",
-        "care_protocol": [
-            "Immediately cease all physical activity and ambulation.",
-            "Assume a seated or semi-reclined resting position with supportive back padding.",
-            "Avoid ingesting oral fluids or medications prior to definitive clinical evaluation."
-        ],
-        "red_flags": "CRITICAL EMERGENCY: Sub-sternal crushing pressure radiating into left arm, jaw, or back, associated with diaphoresis, syncope, and nausea.",
-        "urgency": "CRITICAL EMERGENCY"
-    },
+user_input = st.chat_input("Describe your symptoms or answer the doctor's questions...")
 
-    # 3. Gastrointestinal & Abdominal
-    "stomach_pain": {
-        "title": "Acute Abdominal Discomfort & Functional Dyspepsia",
-        "system": "Gastrointestinal",
-        "keywords": ["stomach pain", "abdominal pain", "belly ache", "stomach cramps", "gastritis", "tummy ache", "gut pain", "stomach hurt"],
-        "pathophysiology": "Visceral sensory irritation resulting from gastric hyperacidity, mucosal breakdown, smooth muscle spasm, or peritoneal distension.",
-        "inquiry": "Where is the pain strictly localized (epigastric, periumbilical, right lower quadrant), and does it correlate chronologically with meals?",
-        "care_protocol": [
-            "Withhold solid, heavy, high-lipid, and acidic food substances for 4–6 hours.",
-            "Initiate the BRAT regimen (bananas, white rice, applesauce, plain toast) when tolerated.",
-            "Consume lukewarm, non-caffeinated peppermint or chamomile infusions."
-        ],
-        "red_flags": "Surgical abdomen indicators: acute localized right lower quadrant rebound tenderness (McBurney point), board-like abdominal wall rigidity, or hematemesis.",
-        "urgency": "High if signs of peritonitis; otherwise Moderate"
-    },
-    "diarrhea": {
-        "title": "Acute Infectious / Osmotic Gastroenteritis",
-        "system": "Gastrointestinal",
-        "keywords": ["diarrhea", "diarrhoea", "loose stool", "watery stool", "loose motions", "frequent stool", "watery poop"],
-        "pathophysiology": "Enterotoxigenic hyper-secretion or osmotic mucosal malabsorption in the ileum and colon driving accelerated transit.",
-        "inquiry": "What is the 24-hour volumetric frequency of loose evacuations, and is there macroscopic presence of blood (hematochezia) or mucus?",
-        "care_protocol": [
-            "Immediately initiate WHO-standard Oral Rehydration Salts (ORS) solution sip-by-sip after every unformed stool.",
-            "Strictly avoid lactose, dairy, sucrose-heavy sodas, and caffeine (which accelerate motility).",
-            "Maintain restful recumbency to reduce peristaltic reflex excitation."
-        ],
-        "red_flags": "Grossly bloody or black melenic stools, signs of hypovolemic shock (orthostatic syncope, absence of micturition >8 hours, dry mucous membranes).",
-        "urgency": "High if dehydration present"
-    },
-    "vomiting": {
-        "title": "Emesis & Acute Gastric Intolerance",
-        "system": "Gastrointestinal",
-        "keywords": ["vomiting", "vomit", "nausea", "throwing up", "puke", "puking", "queasy", "upset stomach"],
-        "pathophysiology": "Stimulation of the chemoreceptor trigger zone (CTZ) in the area postrema inducing retro-peristaltic coordinated diaphragmatic contraction.",
-        "inquiry": "Are you capable of retaining small fluid volumes without regurgitation, and what is the appearance of the vomitus?",
-        "care_protocol": [
-            "Enforce total gastrointestinal resting: nothing by mouth (NPO) for 60 minutes post-emetic event.",
-            "Gradually introduce clear electrolyte solution: 5 mL (one teaspoon) every 5–10 minutes.",
-            "Gradually advance to clear broths as tolerated, avoiding rapid ingestion."
-        ],
-        "red_flags": "Coffee-ground emesis, bright hematemesis, unrelenting localized pain, or persistent neurological lethargy.",
-        "urgency": "High"
-    },
-    "acid_reflux": {
-        "title": "Gastroesophageal Reflux Disease (GERD) & Pyrosis",
-        "system": "Gastrointestinal",
-        "keywords": ["acid reflux", "heartburn", "gerd", "acidity", "sour burp", "acid regurgitation", "chest burning after eating"],
-        "pathophysiology": "Transient lower esophageal sphincter (LES) relaxation allowing retrograde passage of acidic gastric contents (pH <4) onto esophageal mucosa.",
-        "inquiry": "Does burning intensify during supine post-prandial positioning, and have you noticed sour fluid regurgitation into the hypopharynx?",
-        "care_protocol": [
-            "Elevate head of the bed frame 15–20 cm (avoid stacking soft pillows which only flexes the neck).",
-            "Remain completely upright for at least 3 hours following solid caloric intake.",
-            "Eliminate trigger substrates: chocolate, peppermint, high-fat foods, acidic citrus, and caffeinated beverages."
-        ],
-        "red_flags": "Progressive dysphagia (sensation of food bolus lodged behind sternum), odynophagia, unexplained weight loss, or persistent vomiting.",
-        "urgency": "Routine to Moderate"
-    },
-    "constipation": {
-        "title": "Colonic Dysmotility & Acute Constipation",
-        "system": "Gastrointestinal",
-        "keywords": ["constipation", "constipated", "hard stool", "bowel strain", "cant poop", "cannot pass stool"],
-        "pathophysiology": "Prolonged colonic transit resulting in excessive mucosal water absorption and dry, scybalous, difficult-to-expel fecal masses.",
-        "inquiry": "How many days have elapsed since your last spontaneous complete bowel evacuation, and are you passing flatus normally?",
-        "care_protocol": [
-            "Increase dietary soluble and insoluble fiber intake to 25–30g daily (psyllium, legumes, oats, flaxseed).",
-            "Maintain daily water intake of 2.5 liters to ensure stool soft consistency.",
-            "Engage in daily brisk aerobic walking to stimulate colonic migrating motor complexes."
-        ],
-        "red_flags": "Obstipation (total inability to pass both feces and gas), severe abdominal distension, fever, or rectal bleeding.",
-        "urgency": "Moderate; Emergency if obstipation + vomiting"
-    },
+if user_input:
+    st.session_state.turn_count += 1
+    st.chat_message("user").markdown(user_input)
+    st.session_state.messages.append({"role": "user", "content": user_input, "audio": False})
 
-    # 4. Neurological & Neuro-Sensory
-    "headache": {
-        "title": "Cephalalgia / Tension-Type & Migraine Presentation",
-        "system": "Neurological",
-        "keywords": ["headache", "head pain", "migraine", "temple pain", "forehead pain", "throbbing head", "head ache"],
-        "pathophysiology": "Neurovascular trigeminovascular activation (migraine) or sustained pericranial muscular hyper-tonicity and central sensitization (tension-type).",
-        "inquiry": "Is the discomfort a bilateral band-like compression or unilateral pulsatile throbbing accompanied by photophobia or phonophobia?",
-        "care_protocol": [
-            "Retire into a sound-attenuated, completely darkened room and close eyes for 60 minutes.",
-            
+    detected = detect_clinical_keys(user_input)
+    for k in detected:
+        if k not in st.session_state.active_symptoms:
+            st.session_state.active_symptoms.append(k)
+
+    active = st.session_state.active_symptoms
+
+    with st.chat_message("assistant"):
+        # Turn 1: Immediate recognition of initial symptom + targeted clinical inquiry
+        if st.session_state.turn_count == 1:
+            if active:
+                p = active[0]
+                cond = DB[p]
+                reply = (
+                    f"### Clinical Assessment Registered: {cond[1]}\n"
+                    f"*Domain:* **{cond[2]}**\n\n"
+                    f"• **Initial Observation:** I have recorded your presentation regarding **{cond[1]}**.\n\n"
+                    f"👉 **Focused Clinical Inquiry:** {cond[3]}\n\n"
+                    f"*Please reply with your specifics so I can calibrate supportive care and screen for escalation thresholds.*"
+                )
+            else:
+                reply = "Could you specify your bodily symptoms in more detail (such as ankle pain, fever, chest tightness, sore throat, severe headache, or stomach cramps) so I can assist your triage?"
+        # Turn 2+: Comprehensive synthesis, supportive regimen, and safety red flags
+        else:
+            if active:
+                p = active[0]
+                cond = DB[p]
+                all_titles = " • ".join([DB[k][1] for k in active])
+                reply = (
+                    f"### Clinical Triage Synthesis: {cond[1]}\n"
+                    f"**Cumulative Active Context:** {all_titles}\n\n"
+                    f"• **Evidence-Based Supportive Care Regimen:**\n"
+                    f"  {cond[4]}\n\n"
+                    f"• ⚠️ **Critical Red-Flag Escalation Thresholds:**\n"
+                    f"  {cond[5]}\n\n"
+                    f"*Reminder: Educational triage tool only. If symptoms intensify, functional weight-bearing is compromised, or red flags manifest, consult a certified physician immediately.*"
+                )
+            else:
+                reply = "Thank you for the update. Could you state where the primary discomfort is located or if there are other accompanying symptoms so that I may direct clinical guidance appropriately?"
+
+        st.markdown(reply)
+        play_audio(reply)
+        st.session_state.messages.append({"role": "assistant", "content": reply, "audio": True})
+    
