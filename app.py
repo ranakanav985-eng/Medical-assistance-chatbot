@@ -18,6 +18,78 @@ with st.sidebar:
     else:
         st.success("API Key detected from Secrets!")
     
+    st.subheader("🎙️ Voice Input")
+    st.caption("Tap the button below and speak your symptoms:")
+    
+    # Browser-native Web Speech-to-Text component
+    components.html("""
+    <script>
+    function startDictation() {
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            alert("Speech recognition is not supported on this browser. Please use Chrome or Safari.");
+            return;
+        }
+        var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        var recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        var statusElem = document.getElementById("rec-status");
+        statusElem.innerHTML = "🔴 Listening... Speak now.";
+
+        recognition.onresult = function(event) {
+            var transcript = event.results[0][0].transcript;
+            statusElem.innerHTML = "✅ Captured: " + transcript;
+            
+            // Find parent Streamlit chat input and insert transcribed text
+            var parentDoc = window.parent.document;
+            var chatInput = parentDoc.querySelector('textarea[data-testid="stChatInputTextArea"]');
+            if (chatInput) {
+                chatInput.value = transcript;
+                chatInput.dispatchEvent(new Event('input', { bubbles: true }));
+                // Trigger submission via Enter key
+                setTimeout(function() {
+                    chatInput.dispatchEvent(new KeyboardEvent('keydown', {
+                        key: 'Enter',
+                        code: 'Enter',
+                        keyCode: 13,
+                        which: 13,
+                        bubbles: true
+                    }));
+                }, 300);
+            }
+        };
+
+        recognition.onerror = function(event) {
+            statusElem.innerHTML = "⚠️ Error / Cancelled. Tap to try again.";
+        };
+
+        recognition.onend = function() {
+            if (statusElem.innerHTML.includes("Listening")) {
+                statusElem.innerHTML = "Tap to speak again.";
+            }
+        };
+
+        recognition.start();
+    }
+    </script>
+    <div style="font-family: sans-serif; text-align: center;">
+        <button onclick="startDictation()" style="
+            background-color: #2E7D32;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+        ">🎙️️ Speak Symptoms</button>
+        <p id="rec-status" style="font-size: 12px; color: #555; margin-top: 6px;">Tap button to activate microphone</p>
+    </div>
+    """, height=85)
+
     if st.button("Reset Session"):
         st.session_state.messages = []
         st.session_state.turns = 0
@@ -78,7 +150,7 @@ def fallback_reply(user_text, turn_count):
     else:
         return f"### Clinical Triage Synthesis: {matched[0]}\n\n• **Physiological Correlation:** Symptoms are consistent with localized irritation, inflammation, or mechanical strain in the affected tissue.\n\n• **Evidence-Based Supportive Care:**\n  - {matched[2]}\n\n• ⚠️ **Critical Red-Flag Escalation Thresholds:**\n  - {matched[3]}\n\n*Reminder: Educational demonstration tool. If symptoms persist or worsen, please consult a certified doctor immediately.*"
 
-# Client-Side Voice Engine (Web Speech API)
+# Client-Side Voice Engine (Speech Synthesis)
 def play_audio(script_text):
     clean = re.sub(r'[*_#`⚠️👉🔊•\-]', '', script_text)
     clean = " ".join(clean.replace('"', '').replace("'", "").replace('\n', ' ').split())
@@ -170,13 +242,13 @@ if user_input:
                     bot_reply = data["choices"][0]["message"]["content"]
                     used_cloud = True
             except Exception:
-                # Silently catch any connection error or timeout
                 used_cloud = False
 
-        # Fallback cleanly to internal engine if API is offline or returns error
+        # Silent fallback to built-in clinical database
         if not used_cloud:
             bot_reply = fallback_reply(user_input, st.session_state.turns)
 
         st.markdown(bot_reply)
         play_audio(bot_reply)
         st.session_state.messages.append({"role": "assistant", "content": bot_reply, "audio": True})
+        
