@@ -1,4 +1,3 @@
-
 import html
 import json
 import os
@@ -6,27 +5,27 @@ import re
 import urllib.error
 import urllib.request
 from datetime import date
- 
+
 import streamlit as st
 import streamlit.components.v1 as components
- 
- 
+
+
 # --------------------------------------------------
 # PAGE CONFIGURATION
 # --------------------------------------------------
- 
+
 st.set_page_config(
     page_title="MedAssist AI - Clinical Assistant",
     page_icon="🩺",
     layout="centered",
 )
- 
+
 st.title("🩺 MedAssist AI")
 st.caption(
     "Educational clinical triage assistant | "
     "Not a substitute for professional medical care."
 )
- 
+
 # Styling for the prescription card.
 st.markdown(
     """
@@ -56,26 +55,26 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
- 
- 
+
+
 # --------------------------------------------------
 # API CONFIGURATION
 # --------------------------------------------------
- 
+
 def get_api_key():
     try:
         key = st.secrets.get("OPENROUTER_API_KEY", "")
     except Exception:
         key = ""
- 
+
     return key or os.getenv("OPENROUTER_API_KEY", "")
- 
- 
+
+
 api_key = get_api_key()
- 
+
 with st.sidebar:
     st.subheader("⚙️ Settings")
- 
+
     if not api_key:
         api_key = st.text_input(
             "OpenRouter API key",
@@ -83,10 +82,10 @@ with st.sidebar:
             help="Optional. Leave blank to use the basic local "
                  "symptom guidance engine.",
         )
- 
+
     language = st.radio("Language / भाषा", ["English", "हिन्दी"], horizontal=True)
     voice_on = st.toggle("🔊 Speak responses", value=True)
- 
+
     with st.expander("More patient details (optional)"):
         patient_weight = st.number_input(
             "Weight (kg, if known)", min_value=0.0, max_value=300.0, value=0.0
@@ -100,26 +99,26 @@ with st.sidebar:
         medical_history = st.text_area(
             "Relevant medical conditions", placeholder="Enter conditions, or unknown"
         )
- 
+
     if st.button("🗑️ Reset conversation", use_container_width=True):
         st.session_state.pop("messages", None)
         st.session_state.pop("profile", None)  # new patient
         st.rerun()
- 
+
 SPEECH_LANG = "hi-IN" if language == "हिन्दी" else "en-IN"
- 
- 
+
+
 # --------------------------------------------------
 # CLINICAL SAFETY RULES
 # --------------------------------------------------
- 
+
 SYSTEM_PROMPT = """
 You are MedAssist AI, an educational clinical triage assistant.
 Reply with ONE JSON object only. No markdown, no text outside the JSON.
- 
+
 Schema:
 {
- "type": "advice" or "question",
+ "type": "advice",
  "diagnosis": "Possible cause(s), max 12 words, never a confirmed diagnosis",
  "advice": ["max 3 short supportive-care tips"],
  "medicines": [{"name": "over-the-counter medicine or product, or a
@@ -128,14 +127,14 @@ Schema:
  "tests": ["tests a doctor may advise, max 3, can be empty"],
  "red_flags": ["max 3 emergency warning signs"],
  "see_doctor": "one short sentence on when to see a doctor",
- "question": "ONE short follow-up question if key information is missing
-     (age, duration, severity), else empty string",
+ "question": "",
  "summary": "3-4 short plain sentences that will be read aloud: likely cause, which medicine(s) and supportive care, and when to see a doctor. No dose numbers."
 }
- 
+
 Rules:
-- If the patient has not given enough information, use type "question",
-  put one short question in "question" and leave other lists empty.
+- ALWAYS give the complete guidance sheet in your FIRST reply. NEVER ask
+  follow-up questions. If some details are missing, give the best general
+  guidance and, in "see_doctor", say what to tell the doctor.
 - Check for emergency warning signs first.
 - Suggest over-the-counter medicines or non-drug care only. NEVER suggest
   antibiotics or prescription medicines.
@@ -149,12 +148,12 @@ Rules:
 - Keep every field brief. Be fast and concise.
 - Write all text values in the requested language.
 """
- 
- 
+
+
 # --------------------------------------------------
 # EMERGENCY WARNING-SIGN SCREENING (simple keyword screen)
 # --------------------------------------------------
- 
+
 EMERGENCY_GROUPS = [
     (["can't breathe", "cannot breathe", "cannot breath",
       "difficulty breathing", "severe shortness of breath",
@@ -172,7 +171,7 @@ EMERGENCY_GROUPS = [
     (["swollen tongue", "throat closing", "anaphylaxis"],
      "Possible severe allergic reaction"),
 ]
- 
+
 EMERGENCY_REPLY_EN = (
     "Your message includes a possible emergency warning sign. "
     "Call your local emergency number (112 in India) or go to the nearest "
@@ -183,20 +182,20 @@ EMERGENCY_REPLY_HI = (
     "तुरंत 112 पर कॉल करें या नज़दीकी अस्पताल के आपातकालीन विभाग जाएं। "
     "इस चैटबॉट के जवाब का इंतज़ार न करें।"
 )
- 
- 
+
+
 def emergency_check(message):
     text = message.lower()
     for phrases, category in EMERGENCY_GROUPS:
         if any(phrase in text for phrase in phrases):
             return category
     return None
- 
- 
+
+
 # --------------------------------------------------
 # LOCAL FALLBACK KNOWLEDGE BASE (used without API key / on failure)
 # --------------------------------------------------
- 
+
 FALLBACK_DB = {
     "fever": {
         "title": "Fever (possible viral infection)",
@@ -331,8 +330,8 @@ FALLBACK_DB = {
         "keywords": ["constipation", "hard stool", "कब्ज"],
     },
 }
- 
- 
+
+
 def fallback_reply(user_text):
     text = user_text.lower()
     entries = sorted(
@@ -360,18 +359,30 @@ def fallback_reply(user_text):
                     f"{entry['see']}"
                 ),
             }
- 
-    q = ("Please describe your main symptom, when it started and how "
-         "severe it is.")
-    return {"type": "question", "question": q, "summary": q,
-            "diagnosis": "", "advice": [], "medicines": [], "tests": [],
-            "red_flags": [], "see_doctor": ""}
- 
- 
+
+    summary = ("Your symptoms need a proper examination to find the cause. "
+               "Rest, drink enough fluids and note when the symptoms started "
+               "and how severe they are. Avoid taking medicines on your own "
+               "until a doctor or pharmacist advises you.")
+    return {
+        "type": "advice",
+        "diagnosis": "Cause unclear - needs clinical assessment",
+        "advice": ["Rest", "Drink fluids regularly",
+                   "Note when symptoms started and how severe they are"],
+        "medicines": [],
+        "tests": ["Basic tests as advised by the doctor"],
+        "red_flags": ["Difficulty breathing", "Chest pain",
+                      "Severe or rapidly worsening symptoms"],
+        "see_doctor": "Please consult a doctor for a proper assessment.",
+        "question": "",
+        "summary": summary,
+    }
+
+
 # --------------------------------------------------
 # OPENROUTER REQUEST (short prompt + token cap = faster answers)
 # --------------------------------------------------
- 
+
 def parse_json_reply(raw):
     if not raw:
         return None
@@ -385,8 +396,8 @@ def parse_json_reply(raw):
     if not isinstance(data, dict):
         return None
     return data
- 
- 
+
+
 def history_text(item):
     """Compact text version of a stored message for LLM context."""
     if item.get("rx"):
@@ -394,37 +405,37 @@ def history_text(item):
         return (f"{rx.get('diagnosis', '')} "
                 f"{rx.get('question', '')}").strip() or item["content"]
     return item["content"]
- 
- 
+
+
 def ask_openrouter(user_text, patient_context, conversation):
     clean_key = str(api_key).strip().strip('"').strip("'")
     if not clean_key:
         return None
- 
+
     messages = [{
         "role": "system",
         "content": SYSTEM_PROMPT + f"\nLanguage: {language}",
     }]
- 
+
     # Only the last few turns keeps responses fast.
     for item in conversation[-4:]:
         if item["role"] in ("user", "assistant"):
             messages.append({"role": item["role"],
                              "content": history_text(item)})
- 
+
     messages.append({
         "role": "user",
         "content": (f"Patient context:\n{patient_context}\n\n"
                     f"Latest patient message:\n{user_text}"),
     })
- 
+
     payload = json.dumps({
         "model": "openrouter/free",
         "messages": messages,
         "temperature": 0.2,
         "max_tokens": 600,
     }).encode("utf-8")
- 
+
     request = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
         data=payload,
@@ -436,7 +447,7 @@ def ask_openrouter(user_text, patient_context, conversation):
         },
         method="POST",
     )
- 
+
     try:
         with urllib.request.urlopen(request, timeout=25) as response:
             result = json.loads(response.read().decode("utf-8"))
@@ -448,20 +459,20 @@ def ask_openrouter(user_text, patient_context, conversation):
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
             ValueError, KeyError, TypeError, OSError):
         return None
- 
- 
+
+
 # --------------------------------------------------
 # PRESCRIPTION-STYLE RENDERING
 # Doses/frequency/duration are NEVER generated by the AI. The app fills
 # them with safe, fixed text so the bot cannot invent a dose.
 # --------------------------------------------------
- 
+
 def clean_list(value, limit=4):
     if not isinstance(value, list):
         return []
     return [str(v).strip() for v in value if str(v).strip()][:limit]
- 
- 
+
+
 def normalise(data):
     """Make sure every field exists and has the right type."""
     meds = []
@@ -473,18 +484,18 @@ def normalise(data):
                 "note": str(m.get("note", "")).strip(),
             })
     return {
-        "type": data.get("type", "advice"),
+        "type": "advice",
         "diagnosis": str(data.get("diagnosis", "")).strip(),
         "advice": clean_list(data.get("advice"), 3),
         "medicines": meds,
         "tests": clean_list(data.get("tests"), 3),
         "red_flags": clean_list(data.get("red_flags"), 3),
         "see_doctor": str(data.get("see_doctor", "")).strip(),
-        "question": str(data.get("question", "")).strip(),
+        "question": "",
         "summary": str(data.get("summary", "")).strip(),
     }
- 
- 
+
+
 # Standard adult over-the-counter label guidance for a few common products.
 # Fixed text reviewed by a human - the AI never generates doses.
 DOSE_TABLE = [
@@ -755,10 +766,10 @@ def play_audio(script_text, lang_code):
  
 GREETING_EN = (
     "Hello! 👋 I'm **MedAssist AI**.\n\n"
-    "Tell me your symptoms and I'll give a short prescription-style "
-    "guidance sheet: possible cause, supportive care, medicine safety "
-    "information and tests a doctor may advise.\n\n"
-    "What symptoms are you experiencing?"
+    "Tell me **all your symptoms in one message** - what you feel, "
+    "for how long, how severe it is, and any allergies or medicines you "
+    "take. I'll give your prescription-style guidance sheet right away.\n\n"
+    "What problem are you facing?"
 )
  
 # Ask for age and gender first: dosage and timing depend on them.
@@ -822,7 +833,7 @@ for idx, message in enumerate(st.session_state.messages):
 # CHAT INPUT AND RESPONSE
 # --------------------------------------------------
  
-user_input = st.chat_input("Describe your symptoms...")
+user_input = st.chat_input("Describe all symptoms, how long, and how severe...")
  
 if user_input and user_input.strip():
     user_input = user_input.strip()
