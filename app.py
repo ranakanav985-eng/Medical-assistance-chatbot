@@ -1,254 +1,369 @@
+import io
+import re
+from datetime import date, datetime
+
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
-import requests
-import re
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+)
 
-st.set_page_config(page_title="MedAssist AI - Clinical Assistant", page_icon="🩺", layout="centered")
+st.set_page_config(page_title="MedAssist AI - Clinical Assistant", page_icon="🩺", layout="wide")
 
-st.title("🩺 MedAssist AI - Clinical Assistant")
-st.caption("⚠️ **Educational Demonstration Only.** This assistant provides clinical triage guidance and supportive self-care advice. It does not provide medical diagnoses or prescriptions. For severe symptoms, consult a certified physician immediately.")
+SYSTEM_PROMPT = """
+You are MedAssist AI, an educational symptom-triage assistant, not a doctor.
+Use empathetic, plain language. Ask focused follow-up questions when important details are missing.
+Consider the conversation history, patient age, symptom duration, severity, allergies, conditions and current medicines when provided.
+Explain possible causes as possibilities, never as a confirmed diagnosis. Offer conservative, non-drug supportive care when appropriate.
+Do not prescribe medicines, choose a patient-specific medicine, or provide patient-specific dose, frequency or duration.
+Do not create prescription instructions. If the user asks about medicines, recommend review by a licensed clinician or pharmacist, especially for children, pregnancy, allergies, chronic conditions or other medicines.
+Always screen for emergency symptoms. If a potential emergency is mentioned, put urgent action first and advise contacting local emergency services / going to an emergency department. Do not delay urgent care with more questions.
+Avoid overconfident claims, fabricated evidence, and overly technical jargon.
+End with a brief reminder that this is educational guidance and is not a substitute for professional medical assessment.
+Structure answers with headings when useful: Summary, Follow-up questions, Supportive care, When to seek urgent help.
+"""
 
-# Retrieve OpenRouter Key securely from Streamlit Secrets or Sidebar
-api_key = st.secrets.get("OPENROUTER_API_KEY", None)
+EMERGENCY_RULES = [
+    (r"\b(chest pain|chest pressure|crushing chest|pain in (my )?(left arm|jaw))\b",
+     "Chest pain/pressure can be an emergency. Seek emergency medical care now, especially with breathlessness, sweating, nausea, or pain spreading to the arm/jaw."),
+    (r"\b(can't breathe|cannot breathe|severe shortness of breath|struggling to breathe|blue lips)\b",
+     "Severe breathing difficulty or blue lips can be an emergency. Call your local emergency number now."),
+    (r"\b(face droop|slurred speech|sudden weakness|one-sided weakness|sudden confusion)\b",
+     "These can be signs of a stroke. Call your local emergency number now; do not drive yourself."),
+    (r"\b(unconscious|not waking|seizure lasting|severe bleeding|bleeding won't stop)\b",
+     "This may be an emergency. Call your local emergency number now."),
+    (r"\b(swollen tongue|throat closing|anaphylaxis)\b",
+     "Possible severe allergic reaction: call your local emergency number now."),
+    (r"\b(suicidal|want to kill myself|overdose|took too many pills)\b",
+     "Please get urgent in-person help now. If there may have been an overdose or immediate danger, call local emergency services or go to the nearest emergency department. Stay with a trusted person if possible."),
+]
+
+def emergency_messages(text):
+    lowered = text.lower()
+    found = []
+    for pattern, message in EMERGENCY_RULES:
+        if re.search(pattern, lowered):
+            found.append(message)
+    return list(dict.fromkeys(found))
+
+def get_api_key():
+    try:
+        key = st.secrets.get("OPENROUTER_API_KEY", "")
+    except Exception:
+        key = ""
+    if not key:
+        key = st.session_state.get("session_api_key", "")
+    return str(key).strip().strip('"').strip("'")
+
+def ask_model(messages, api_key):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://streamlit.io",
+        "X-Title": "MedAssist AI",
+    }
+    payload = {
+        "model": "openrouter/auto",
+        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+        "temperature": 0.2,
+    }
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+def build_pdf(patient, symptoms, assessment, medication_rows, notes):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm,
+        topMargin=16*mm, bottomMargin=16*mm
+    )
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name="ClinicTitle", parent=styles["Title"], alignment=TA_CENTER,
+        textColor=colors.HexColor("#155E75"), fontSize=19, leading=23, spaceAfter=4
+    ))
+    styles.add(ParagraphStyle(
+        name="SmallNote", parent=styles["BodyText"], fontSize=8, leading=10,
+        textColor=colors.HexColor("#555555")
+    ))
+    styles.add(ParagraphStyle(
+        name="SectionHead", parent=styles["Heading2"], textColor=colors.HexColor("#155E75"),
+        fontSize=12, leading=15, spaceBefore=10, spaceAfter=5
+    ))
+    story = [
+        Paragraph("MedAssist AI", styles["ClinicTitle"]),
+        Paragraph("CONSULTATION SUMMARY — NOT A PRESCRIPTION", styles["Heading3"]),
+        Paragraph(
+            "Educational triage report for clinician review. AI output is not a diagnosis, "
+            "medical order, or substitute for an examination.", styles["SmallNote"]
+        ),
+        Spacer(1, 8),
+    ]
+    patient_data = [
+        ["Patient name", patient.get("name") or "Not provided",
+         "Report date", date.today().strftime("%d %b %Y")],
+        ["Age", patient.get("age") or "Not provided",
+         "Sex (optional)", patient.get("sex") or "Not provided"],
+        ["Allergies", patient.get("allergies") or "Not provided",
+         "Current medicines", patient.get("medicines") or "Not provided"],
+        ["Relevant conditions", patient.get("conditions") or "Not provided",
+         "Symptom duration", patient.get("duration") or "Not provided"],
+    ]
+    t = Table(patient_data, colWidths=[28*mm, 48*mm, 30*mm, 48*mm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#E6F4F1")),
+        ("BACKGROUND", (2,0), (2,-1), colors.HexColor("#E6F4F1")),
+        ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#B7C9CC")),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("FONTSIZE", (0,0), (-1,-1), 8),
+        ("LEFTPADDING", (0,0), (-1,-1), 5),
+        ("RIGHTPADDING", (0,0), (-1,-1), 5),
+        ("TOPPADDING", (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+    ]))
+    story += [t, Paragraph("Symptoms reported", styles["SectionHead"]),
+              Paragraph(escape_pdf(symptoms or "Not provided"), styles["BodyText"]),
+              Paragraph("AI-generated triage summary", styles["SectionHead"]),
+              Paragraph(escape_pdf(assessment or "No assessment available."), styles["BodyText"])]
+
+    story.append(Paragraph("Medication review — clinician to complete", styles["SectionHead"]))
+    story.append(Paragraph(
+        "No medicines or dosing instructions are generated by this chatbot. A licensed clinician "
+        "must independently decide whether medication is appropriate and verify every order.", styles["SmallNote"]
+    ))
+    med_data = [["Medicine / strength", "Dose", "Route", "Frequency", "Duration", "Clinician initials"]]
+    for row in medication_rows:
+        med_data.append([row.get(k, "") or "—" for k in
+                         ["medicine", "dose", "route", "frequency", "duration", "initials"]])
+    mt = Table(med_data, colWidths=[34*mm, 20*mm, 19*mm, 27*mm, 22*mm, 30*mm], repeatRows=1)
+    mt.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#155E75")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#B7C9CC")),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("FONTSIZE", (0,0), (-1,-1), 7),
+        ("LEFTPADDING", (0,0), (-1,-1), 4),
+        ("RIGHTPADDING", (0,0), (-1,-1), 4),
+        ("TOPPADDING", (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+    ]))
+    story += [mt, Paragraph("Clinician notes / follow-up plan", styles["SectionHead"]),
+              Paragraph(escape_pdf(notes or "Not provided"), styles["BodyText"]),
+              Spacer(1, 12),
+              Paragraph(
+                  "Safety: If symptoms are severe, rapidly worsening, or suggest an emergency, "
+                  "seek urgent medical care rather than relying on this report.", styles["SmallNote"]
+              )]
+    doc.build(story)
+    return buffer.getvalue()
+
+def escape_pdf(value):
+    value = str(value or "")
+    return (value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\n", "<br/>"))
+
+st.title("🩺 MedAssist AI — Clinical Assistant")
+st.caption(
+    "Educational demonstration only. Provides symptom-triage information, not diagnoses or prescriptions. "
+    "For severe symptoms, contact local emergency services."
+)
 
 with st.sidebar:
-    st.subheader("⚙️ Cloud Model Setup")
-    if not api_key:
-        api_key = st.text_input("OpenRouter API Key (Optional)", type="password", help="Paste your key here or save it in Streamlit Secrets.")
+    st.subheader("⚙️ Model setup")
+    if not get_api_key():
+        st.session_state.session_api_key = st.text_input(
+            "OpenRouter API key", type="password",
+            help="Prefer setting OPENROUTER_API_KEY in Streamlit secrets."
+        )
     else:
-        st.success("API Key detected from Secrets!")
-    
-    st.subheader("🎙️ Voice Input")
-    st.caption("Tap the button below and speak your symptoms:")
-    
-    # Browser-native Web Speech-to-Text component
+        st.success("API key configured.")
+    st.caption("Voice input works in supported browsers.")
     components.html("""
     <script>
     function startDictation() {
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-            alert("Speech recognition is not supported on this browser. Please use Chrome or Safari.");
-            return;
-        }
-        var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        var recognition = new SpeechRecognition();
-        recognition.lang = 'en-US';
-        recognition.interimResults = false;
-        recognition.maxAlternatives = 1;
-
-        var statusElem = document.getElementById("rec-status");
-        statusElem.innerHTML = "🔴 Listening... Speak now.";
-
-        recognition.onresult = function(event) {
-            var transcript = event.results[0][0].transcript;
-            statusElem.innerHTML = "✅ Captured: " + transcript;
-            
-            // Find parent Streamlit chat input and insert transcribed text
-            var parentDoc = window.parent.document;
-            var chatInput = parentDoc.querySelector('textarea[data-testid="stChatInputTextArea"]');
-            if (chatInput) {
-                chatInput.value = transcript;
-                chatInput.dispatchEvent(new Event('input', { bubbles: true }));
-                // Trigger submission via Enter key
-                setTimeout(function() {
-                    chatInput.dispatchEvent(new KeyboardEvent('keydown', {
-                        key: 'Enter',
-                        code: 'Enter',
-                        keyCode: 13,
-                        which: 13,
-                        bubbles: true
-                    }));
-                }, 300);
-            }
-        };
-
-        recognition.onerror = function(event) {
-            statusElem.innerHTML = "⚠️ Error / Cancelled. Tap to try again.";
-        };
-
-        recognition.onend = function() {
-            if (statusElem.innerHTML.includes("Listening")) {
-                statusElem.innerHTML = "Tap to speak again.";
-            }
-        };
-
-        recognition.start();
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { alert("Speech recognition is not supported in this browser."); return; }
+      const recognition = new SR();
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+      recognition.onresult = function(event) {
+        const transcript = event.results[0][0].transcript;
+        const box = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
+        if (box) {
+          const setter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(box, transcript);
+          box.dispatchEvent(new Event('input', {bubbles:true}));
+          box.focus();
+        } else { alert("Please click the chat box and try voice input again."); }
+        document.getElementById("voice-status").textContent = "Captured: " + transcript;
+      };
+      recognition.onerror = function() {
+        document.getElementById("voice-status").textContent = "Voice input failed. Try again or type your symptoms.";
+      };
+      recognition.start();
+      document.getElementById("voice-status").textContent = "Listening…";
     }
     </script>
-    <div style="font-family: sans-serif; text-align: center;">
-        <button onclick="startDictation()" style="
-            background-color: #2E7D32;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            font-size: 14px;
-            width: 100%;
-        ">🎙️️ Speak Symptoms</button>
-        <p id="rec-status" style="font-size: 12px; color: #555; margin-top: 6px;">Tap button to activate microphone</p>
-    </div>
+    <button onclick="startDictation()" style="width:100%;padding:8px;border:0;border-radius:6px;background:#176B55;color:white;font-weight:600;">🎙️ Speak symptoms</button>
+    <p id="voice-status" style="font-size:12px;">Use microphone permission when prompted.</p>
     """, height=85)
 
-    if st.button("Reset Session"):
-        st.session_state.messages = []
-        st.session_state.turns = 0
+    if st.button("Reset conversation", use_container_width=True):
+        st.session_state.chat_messages = []
         st.rerun()
 
-SYSTEM_PROMPT = """
-You are MedAssist AI, an expert, empathetic clinical triage assistant for an educational exhibition.
-Workflow instructions:
-- Turn 1: Empathetically acknowledge every symptom or trauma mentioned (e.g., knee scrapes, headaches, falls, sprains). Ask 2 focused clinical follow-up questions regarding severity, duration, or injury mechanics.
-- Turn 2+: Synthesize cumulative symptoms. Provide:
-  1. Clinical Impression & Physiological Correlation.
-  2. Evidence-Based Supportive Care & Non-Pharmacological Regimen.
-  3. Critical Emergency Red-Flag Warning Signs requiring immediate doctor/ER evaluation.
-Safety: Do NOT prescribe medications or dosages. Keep formatting structured and concise.
-"""
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
+if "latest_assessment" not in st.session_state:
+    st.session_state.latest_assessment = ""
 
-# 25 Clinical Conditions Fallback Engine
-FALLBACK_DB = {
-    "neck": ("Cervical Muscular Strain / Torticollis", "Can you bring your chin down flush to touch your chest without excruciating pain or resistance?", "Apply warm moist compresses for 15 mins, rest cervical muscles, and avoid sudden rotational movements.", "Severe neck stiffness with high pyrexia, photophobia, or purple rash (Meningitis suspicion)."),
-    "ankle": ("Ankle Ligamentous Inversion Sprain", "Did the trauma involve immediate localized swelling, an audible pop, or inability to take 4 independent steps?", "Follow R.I.C.E.: Rest joint, apply protected Ice for 15 mins, light Compression bandage, and Elevate above heart level.", "Inability to bear weight immediately (Ottawa ankle rule), gross deformity, or severe neurovascular numbness."),
-    "knee": ("Knee Arthralgia & Ligamentous Strain", "Did the knee lock, twist violently, or swell within the first 2 hours of injury?", "Cease weight-bearing loading, apply protected cryotherapy for 15 mins twice daily, and keep leg elevated.", "Rapid swelling within 2 hours, inability to straighten knee fully, or joint redness with fever."),
-    "back": ("Lumbar Paraspinal Strain & Lumbago", "Does discomfort radiate past the knee down the leg, or cause numbness in the groin/saddle area?", "Avoid bed rest >24h; maintain gentle walking, apply alternating warm compresses, and sleep with a knee pillow.", "Cauda Equina flags: loss of bowel/bladder control, saddle numbness, or sudden progressive lower limb weakness."),
-    "wrist": ("Acute Wrist Ligamentous Distension", "Did this follow a fall onto an outstretched hand, and is there tenderness in the anatomical snuffbox?", "Immobilize wrist in neutral alignment with a splint, apply cold packs, and avoid gripping motions.", "Tenderness in anatomical snuffbox (scaphoid fracture suspicion), acute pallor, or persistent thumb numbness."),
-    "fever": ("Systemic Febrile Syndrome", "What is the peak temperature recorded, and has it lasted longer than 48 hours?", "Maintain oral hydration with electrolyte fluids (35 mL/kg/day target), rest in a 21°C ventilated space, and wear breathable clothing.", "Core temperature >103°F (39.4°C), altered consciousness, stiff neck, petechiae, or continuous vomiting."),
-    "throat": ("Acute Pharyngitis & Tonsillitis", "Are you able to swallow liquids comfortably, and are there visible tonsillar white exudates?", "Gargle with warm saline (1/2 tsp salt in 250ml water) 3 times daily, drink warm broths, and rest your voice.", "Inability to swallow saliva (pooling), trismus (inability to open mouth fully), stridor, or asymmetrical tonsillar swelling."),
-    "cough": ("Acute Bronchitis & Respiratory Irritation", "Is the cough dry and hacking or productive with discolored or thick phlegm?", "Perform warm steam inhalation for 10-15 mins, sip warm fluids with honey, and maintain indoor humidity.", "Hemoptysis (coughing blood), respiratory rate >24/min, sharp pleuritic chest pain on inhalation, or dyspnea."),
-    "cold": ("Viral Rhinosinusitis (Common Cold)", "Is nasal drainage watery or thickened, and have symptoms persisted beyond 10 days without relief?", "Administer isotonic saline nasal irrigation, elevate head 30 degrees during sleep, and hydrate well.", "Periorbital eye swelling, severe unilateral facial pain with secondary fever spike, or stiff neck."),
-    "shortness of breath": ("Acute Dyspnea & Bronchospasm Exacerbation", "Did breathlessness commence acutely, and do you perceive end-expiratory whistling or wheezing?", "Adopt High-Fowler's posture (sit upright leaning slightly forward), loosen chest clothing, practice pursed-lip breathing.", "CRITICAL: Central cyanosis (blue lips/fingers), intercostal retractions, inability to speak 2 words, or diaphoresis."),
-    "chest": ("Thoracic Discomfort / Cardiac & Musculoskeletal Triage", "Does the pain fluctuate when pressing on ribs, or feel like deep substernal crushing pressure?", "Immediately cease all physical activity, rest seated upright with back support, and avoid heavy oral intake.", "CRITICAL: Crushing retrosternal pressure radiating to jaw or left arm, cold diaphoresis, dyspnea, or nausea."),
-    "stomach": ("Acute Dyspepsia & Gastroenteritis", "Where is the pain localized (upper or lower), and does it correlate chronologically with meals?", "Withhold heavy/fatty foods for 4-6 hours, adopt the BRAT diet (bananas, rice, applesauce, toast), and sip clear fluids.", "Surgical flags: localized right lower quadrant rebound tenderness (McBurney point), board-like rigidity, hematemesis."),
-    "diarrhea": ("Acute Infectious/Osmotic Gastroenteritis", "What is the 24-hour frequency of loose evacuations, and is there visible blood or dark mucus?", "Immediately initiate Oral Rehydration Salts (ORS) solution sip-by-sip after each loose stool; avoid dairy and sugar.", "Grossly bloody or black melenic stool, postural syncope, absence of urination >8h, or high fever."),
-    "vomit": ("Acute Emesis & Gastric Intolerance", "Can you retain small sips of water without immediately vomiting, and what color is the vomitus?", "Total gastric rest (NPO) for 60 mins post-vomit, then introduce 1 teaspoon (5ml) clear electrolyte fluid every 10 mins.", "Coffee-ground emesis, bright hematemesis, unrelenting localized pain, or persistent neurological lethargy."),
-    "head": ("Cephalalgia / Tension-Type & Migraine", "Is discomfort a bilateral compressive band or unilateral pulsatile throbbing with light sensitivity?", "Retire into a sound-attenuated, darkened room, drink 500-750 mL fluid immediately, and apply cold temporal compress.", "Thunderclap onset (peak in <60 seconds), focal motor deficits, neck stiffness with pyrexia, or post-trauma."),
-    "acid reflux": ("Gastroesophageal Reflux Disease (GERD)", "Does burning intensify during supine reclining, and do you experience sour fluid regurgitation?", "Elevate bed head 15 cm, remain upright 3 hours after meals, avoid late heavy meals, chocolate, and caffeine.", "Progressive dysphagia (food feeling stuck behind sternum), odynophagia, unexplained weight loss, or vomiting."),
-    "dizziness": ("Vestibular Dysfunction & Orthostatic Lightheadedness", "Do you perceive rotational spinning when turning your head, or lightheaded faintness upon standing?", "Sit or lie down flat immediately upon onset to prevent mechanical falls; change postures slowly in 60-second steps.", "HINTS red flags: new speech slurring, acute limb ataxia (cannot stand unaided), double vision, or sudden hearing drop."),
-    "rash": ("Acute Urticaria & Contact Dermatitis", "Are lesions raised, blanching under pressure, or rapidly expanding across body surfaces?", "Wash gently with cool sterile water and mild non-soap syndet, apply cold damp compresses, avoid scratch friction.", "ANAPHYLAXIS: Concurrent angioedema (swelling of lips, tongue, or throat), wheezing, stridor, or syncope."),
-    "burn": ("Superficial / Partial-Thickness Thermal Injury", "Are there intact or ruptured fluid blisters, and does the area exceed the size of your palm?", "Irrigate immediately under cool running tap water for 20 continuous minutes; avoid ice, butter, or toothpaste.", "Burns covering face, hands, major joints, or genitalia; circumferential burns; or white painless leathery eschar."),
-    "fatigue": ("Systemic Asthenia & Post-Viral Fatigue", "Has this fatigue persisted beyond two weeks, and does it remain unrefreshed by 8 hours of sleep?", "Practice energy budgeting, ensure balanced complex carbohydrates and protein intake, and drink 2L water daily.", "Sudden focal limb weakness, exertional syncope, unexplained weight loss, or heavy nocturnal drenching sweats."),
-    "eye": ("Acute Conjunctivitis & Ocular Irritation", "Is there yellow/green discharge gluing lids shut upon waking, or predominantly watery itching?", "Apply cool sterile compresses over closed eyes, discontinue contact lenses immediately, and practice hand hygiene.", "Marked reduction in visual acuity, severe deep ciliary eye pain, severe photophobia, or pupil asymmetry."),
-    "ear": ("Otalgia / Otitis Media & Externa", "Does pulling the earlobe or tragus elicit severe pain, or did this follow swimming or an upper respiratory cold?", "Keep auditory canal strictly dry, rest head elevated, and apply a warm dry external compress over mastoid area.", "Purulent or hemorrhagic canal drainage, redness/swelling behind earlobe (mastoiditis), or facial weakness."),
-    "constipation": ("Colonic Dysmotility & Constipation", "When was your last complete evacuation, and are you passing abdominal flatus (gas) normally?", "Increase dietary soluble fiber (psyllium, oats) to 25-30g daily, drink 2.5L water daily, and walk 20 mins daily.", "Obstipation (total inability to pass both stool and gas), severe distension, continuous vomiting, or rectal bleeding."),
-    "heat exhaustion": ("Thermoregulatory Strain & Heat Exhaustion", "Are you sweating profusely, or has perspiration ceased while your skin feels dry and burning hot?", "Move immediately to an air-conditioned room, apply cold damp towels to neck/axillae/groin, and sip chilled water.", "HEAT STROKE: Anhidrosis (no sweating), core temp >104°F (40°C), confusion, ataxia, seizures, or loss of consciousness."),
-    "mouth ulcer": ("Minor Aphthous Stomatitis", "Is the lesion a solitary shallow round crater with an erythematous halo inside the mouth?", "Rinse with warm saline (1/2 tsp salt in 200ml warm water) 4 times daily, avoid spicy/acidic foods, and use soft brush.", "Ulcers persisting continuously beyond 14 days, recurrent extensive clusters, or concurrent genital sores.")
-}
+with st.expander("🧾 Patient intake form (optional)", expanded=True):
+    with st.form("patient_intake"):
+        c1, c2 = st.columns(2)
+        with c1:
+            patient_name = st.text_input("Patient name (optional)")
+            age = st.number_input("Age", min_value=0, max_value=120, value=18, step=1)
+            sex = st.selectbox("Sex (optional)", ["Not provided", "Female", "Male", "Intersex", "Prefer not to say"])
+            duration = st.text_input("How long have symptoms been present?")
+        with c2:
+            allergies = st.text_area("Known allergies (include 'unknown' if unsure)", height=70)
+            conditions = st.text_area("Existing conditions / pregnancy if relevant", height=70)
+            medicines = st.text_area("Current medicines or supplements", height=70)
+        symptoms = st.text_area("Main symptoms and severity", height=100,
+                                placeholder="Describe symptoms, when they started, severity, and anything that makes them better or worse.")
+        intake_submit = st.form_submit_button("Save patient details")
+    if intake_submit:
+        st.session_state.patient = {
+            "name": patient_name.strip(),
+            "age": str(age) if age else "",
+            "sex": "" if sex in ("Not provided", "Prefer not to say") else sex,
+            "duration": duration.strip(),
+            "allergies": allergies.strip(),
+            "conditions": conditions.strip(),
+            "medicines": medicines.strip(),
+        }
+        st.session_state.intake_symptoms = symptoms.strip()
+        st.success("Patient details saved for this session.")
+        urgent = emergency_messages(symptoms)
+        if urgent:
+            for item in urgent:
+                st.error(item)
 
-def fallback_reply(user_text, turn_count):
-    text_lower = user_text.lower()
-    matched = None
-    for key, data in FALLBACK_DB.items():
-        if key in text_lower or (key == "ankle" and any(w in text_lower for w in ["twist", "sprain", "foot"])):
-            matched = data
-            break
-    if not matched:
-        matched = ("General Bodily Discomfort", "When did this sensation start, and does it worsen with movement or rest?", "Ensure adequate oral hydration, rest comfortably, and observe symptom progression.", "Sudden severe pain, shortness of breath, high persistent fever, or fainting.")
-    
-    if turn_count <= 1:
-        return f"### Clinical Assessment Registered: {matched[0]}\n\n• **Initial Observation:** I have recorded your presentation regarding **{matched[0]}**.\n\n👉 **Focused Clinical Inquiry:** {matched[1]}\n\n*Please share details so I can calibrate supportive care and check for escalation thresholds.*"
-    else:
-        return f"### Clinical Triage Synthesis: {matched[0]}\n\n• **Physiological Correlation:** Symptoms are consistent with localized irritation, inflammation, or mechanical strain in the affected tissue.\n\n• **Evidence-Based Supportive Care:**\n  - {matched[2]}\n\n• ⚠️ **Critical Red-Flag Escalation Thresholds:**\n  - {matched[3]}\n\n*Reminder: Educational demonstration tool. If symptoms persist or worsen, please consult a certified doctor immediately.*"
+patient = st.session_state.get("patient", {})
+if patient:
+    st.info("Patient details are stored in this browser session only. Avoid entering identifying information for demonstrations.")
 
-# Client-Side Voice Engine (Speech Synthesis)
-def play_audio(script_text):
-    clean = re.sub(r'[*_#`⚠️👉🔊•\-]', '', script_text)
-    clean = " ".join(clean.replace('"', '').replace("'", "").replace('\n', ' ').split())
-    html = f"""
-    <script>
-    function speakText() {{
-        window.speechSynthesis.cancel();
-        const msg = new SpeechSynthesisUtterance("{clean}");
-        msg.rate = 0.95;
-        msg.pitch = 1.0;
-        window.speechSynthesis.speak(msg);
-    }}
-    </script>
-    <button onclick="speakText()" style="
-        background-color: #0E76A8;
-        color: white;
-        border: none;
-        padding: 6px 14px;
-        border-radius: 6px;
-        font-weight: 600;
-        cursor: pointer;
-        font-size: 13px;
-        margin-top: 6px;
-    ">🔊 Listen to Clinical Guidance</button>
-    """
-    components.html(html, height=45)
-
-if "messages" not in st.session_state:
-    st.session_state.messages = [{
-        "role": "assistant",
-        "content": (
-            "### 🩺 MedAssist AI - Clinical Assistant\n"
-            "Hello! I am your clinical triage assistant. I analyze physiological symptoms, "
-            "provide evidence-based supportive care protocols, and screen for critical emergency red flags.\n\n"
-            "👉 **How can I assist you today?** Describe any bodily discomfort, symptoms, or injury you are experiencing."
-        ),
-        "audio": True
-    }]
-if "turns" not in st.session_state:
-    st.session_state.turns = 0
-
-for msg in st.session_state.messages:
+st.subheader("💬 Consultation")
+for msg in st.session_state.chat_messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if msg.get("audio"):
-            play_audio(msg["content"])
 
-user_input = st.chat_input("State your health symptoms or answer clinical inquiries...")
+chat_prompt = st.chat_input("Describe symptoms or answer a follow-up question…")
+if chat_prompt:
+    is_first_turn = len(st.session_state.chat_messages) == 0
+    st.session_state.chat_messages.append({"role": "user", "content": chat_prompt})
+    with st.chat_message("user"):
+        st.markdown(chat_prompt)
 
-if user_input:
-    st.session_state.turns += 1
-    st.chat_message("user").markdown(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input, "audio": False})
+    full_user_context = chat_prompt
+    if is_first_turn and patient:
+        intake_text = st.session_state.get("intake_symptoms", "")
+        if intake_text:
+            full_user_context += "\n\nSymptoms from intake form: " + intake_text
+        full_user_context += (
+            f"\nPatient context: age {patient.get('age') or 'not provided'}; "
+            f"symptom duration {patient.get('duration') or 'not provided'}; "
+            f"allergies {patient.get('allergies') or 'not provided'}; "
+            f"conditions {patient.get('conditions') or 'not provided'}; "
+            f"current medicines {patient.get('medicines') or 'not provided'}."
+        )
 
-    with st.chat_message("assistant"):
-        bot_reply = ""
-        used_cloud = False
-
-        if api_key and str(api_key).strip():
-            clean_key = str(api_key).strip().strip('"').strip("'")
-            headers = {
-                "Authorization": f"Bearer {clean_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://streamlit.io",
-                "X-Title": "MedAssist AI"
-            }
-            messages_payload = [{"role": "system", "content": SYSTEM_PROMPT}]
-            for m in st.session_state.messages:
-                messages_payload.append({
-                    "role": "user" if m["role"] == "user" else "assistant",
-                    "content": m["content"]
-                })
-            
-            payload = {
-                "model": "openrouter/auto",
-                "messages": messages_payload,
-                "temperature": 0.3
-            }
-            
+    urgent = emergency_messages(full_user_context)
+    if urgent:
+        reply = "### ⚠️ Urgent safety notice\n\n" + "\n\n".join(urgent) + \
+                "\n\nPlease do not wait for chatbot advice if symptoms are happening now."
+    else:
+        with st.spinner("Preparing triage guidance…"):
             try:
-                resp = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=12
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    bot_reply = data["choices"][0]["message"]["content"]
-                    used_cloud = True
+                key = get_api_key()
+                if not key:
+                    raise RuntimeError("No API key configured")
+                # Include intake details only on the first turn; preserve older conversation turns.
+                model_messages = []
+                first_user = True
+                for m in st.session_state.chat_messages:
+                    content = m["content"]
+                    if is_first_turn and m["role"] == "user" and first_user:
+                        content = full_user_context
+                        first_user = False
+                    model_messages.append({"role": m["role"], "content": content})
+                reply = ask_model(model_messages, key)
             except Exception:
-                used_cloud = False
+                reply = (
+                    "I couldn't reach the AI service just now. Please check the OpenRouter API key "
+                    "and connection, then try again. If symptoms are severe or worsening, seek medical care. "
+                    "This educational chatbot cannot diagnose or prescribe medication."
+                )
+    st.session_state.chat_messages.append({"role": "assistant", "content": reply})
+    st.session_state.latest_assessment = reply
+    st.rerun()
 
-        # Silent fallback to built-in clinical database
-        if not used_cloud:
-            bot_reply = fallback_reply(user_input, st.session_state.turns)
+st.divider()
+st.subheader("📄 Consultation report & PDF")
+st.caption("The report is a summary for discussion with a qualified clinician. It is not a valid prescription.")
 
-        st.markdown(bot_reply)
-        play_audio(bot_reply)
-        st.session_state.messages.append({"role": "assistant", "content": bot_reply, "audio": True})
-        
+default_symptoms = st.session_state.get("intake_symptoms", "")
+report_symptoms = st.text_area("Symptoms to include in report", value=default_symptoms, key="report_symptoms")
+report_assessment = st.text_area(
+    "Consultation summary to include",
+    value=st.session_state.get("latest_assessment", ""),
+    height=180,
+    key="report_assessment",
+)
+clinician_notes = st.text_area("Clinician notes / follow-up plan (optional)", key="clinician_notes")
+st.markdown("**Medication review table** — leave blank for the clinician to complete. The chatbot does not fill medication or dosing details.")
+medication_rows = []
+for i in range(2):
+    with st.expander(f"Medication row {i+1} (clinician use only)", expanded=False):
+        a, b, c = st.columns(3)
+        with a:
+            med_name = st.text_input("Medicine / strength", key=f"med_name_{i}")
+            med_dose = st.text_input("Dose", key=f"med_dose_{i}")
+        with b:
+            med_route = st.text_input("Route", key=f"med_route_{i}")
+            med_frequency = st.text_input("Frequency", key=f"med_frequency_{i}")
+        with c:
+            med_duration = st.text_input("Duration", key=f"med_duration_{i}")
+            med_initials = st.text_input("Clinician initials", key=f"med_initials_{i}")
+        medication_rows.append({
+            "medicine": med_name, "dose": med_dose, "route": med_route,
+            "frequency": med_frequency, "duration": med_duration, "initials": med_initials
+        })
+
+pdf_patient = dict(patient)
+pdf_patient.setdefault("age", "")
+if st.button("Generate consultation PDF", type="primary"):
+    if not report_symptoms.strip() and not report_assessment.strip():
+        st.warning("Add symptoms or a consultation summary before generating the report.")
+    else:
+        pdf_bytes = build_pdf(pdf_patient, report_symptoms, report_assessment, medication_rows, clinician_notes)
+        st.download_button(
+            "⬇️ Download consultation report (PDF)",
+            data=pdf_bytes,
+            file_name=f"medassist_consultation_{date.today().isoformat()}.pdf",
+            mime="application/pdf",
+        )
+
+st.caption("For emergencies, use local emergency services. Do not use this educational demonstration to decide on medication or delay care.")
+    
